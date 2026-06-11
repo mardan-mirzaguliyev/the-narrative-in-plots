@@ -4,4 +4,8 @@ format: html
 date: 2026/06/09
 ---
 
+```{r Load Necessary Packages}
+library(tidyverse)
+library()
+```
 
