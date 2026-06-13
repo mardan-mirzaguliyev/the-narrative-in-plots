@@ -1,1 +1,1 @@
-# the-narrative-in-plots
+# the_narratives_in_graphs
