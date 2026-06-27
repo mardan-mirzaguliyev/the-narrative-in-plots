@@ -85,7 +85,7 @@ y_min <- min(arc$line_valence, na.rm = TRUE) - 0.3
 y_max <- max(section_labels$line_valence, na.rm = TRUE) + 0.3
 
 p1 <- ggplot(arc, aes(x = line, y = line_valence,
-                      color = section, linety = section, group = 1)) +
+                      color = section, linetype = section, group = 1)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
   geom_line(linewidth = 1, show.legend = FALSE) +
   geom_point(size = 3, show.legend = FALSE) +
