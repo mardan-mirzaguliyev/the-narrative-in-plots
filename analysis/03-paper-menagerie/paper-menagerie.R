@@ -12,6 +12,7 @@ library(scales)    # Number formatting — percent(), comma() for axis labels an
 library(gt)        # Markdown table generation and saving via kable() and gtsave
 library(syuzhet)   # Line-level scoring without tokenisation; better for sentences or paragraphs
 library(patchwork) # Combined plots
+library(ggrepel)   # Plot readability
 
 
 # DATA PREPARATION
@@ -20,16 +21,17 @@ story_raw <- pdf_text(story_path)
 
 
 ## Build a data frame from the raw text
+
 ### Collapse all text first
 story_full_text <- paste(story_raw, collapse = " ") |> 
   str_squish()
-
+story_full_text
 
 # Split on paragraph numbers (1 through 13)
 story_tibble <- tibble(
   text = str_split(story_full_text,
                    "(?=\\b([1-9]|1[0-3])\\s+[A-Z])")[[1]]
-) |> 
+  ) |> 
   filter(str_squish(text) != "") |> 
   mutate(
     paragraph = row_number(),
@@ -69,42 +71,46 @@ nrc <- get_sentiments("nrc")
 ### Compute coverage of each lexicons
 
 ### AFINN
-coverage_table_afinn <- story_tokens |> 
+table_coverage_afinn <- story_tokens |> 
+  mutate(token_id = row_number()) |> 
   left_join(afinn, by = "word") |>
   summarize(
-    total_words = n(),
-    matched_words = sum(!is.na(value)),
+    total_words = n_distinct(token_id),
+    matched_words = n_distinct(token_id[!is.na(value)]),
     coverage = percent(matched_words / total_words, accuracy = 0.1))
 
 ### Bing
-coverage_table_bing <- story_tokens |> 
+table_coverage_bing <- story_tokens |> 
+  mutate(token_id = row_number()) |> 
   left_join(bing, by = "word") |>
   summarize(
-    total_words = n(),
-    matched_words = sum(!is.na(sentiment)),
+    total_words = n_distinct(token_id),
+    matched_words = n_distinct(token_id[!is.na(sentiment)]),
     coverage = percent(matched_words / total_words, accuracy = 0.1))
+
 
 ### NRC
-coverage_table_nrc <- story_tokens |> 
+table_coverage_nrc <- story_tokens |> 
+  mutate(token_id = row_number()) |> 
   left_join(nrc, by = "word", relationship = "many-to-many") |>
   summarize(
-    total_words = n_distinct(word),
-    matched_words = n_distinct(word[!is.na(sentiment)]),
+    total_words = n_distinct(token_id),
+    matched_words = n_distinct(token_id[!is.na(sentiment)]),
     coverage = percent(matched_words / total_words, accuracy = 0.1))
 
 
-coverage_table <- bind_rows(coverage_table_afinn,
-                            coverage_table_bing,
-                            coverage_table_nrc)
+table_coverage <- bind_rows(table_coverage_afinn,
+                            table_coverage_bing,
+                            table_coverage_nrc)
 
-coverage_table <- coverage_table |> 
-  mutate(lexicon =c("AFINN", "Bing", "NRC")) |> 
+table_coverage <- table_coverage |> 
+  mutate(lexicon = c("AFINN", "Bing", "NRC")) |> 
   relocate(lexicon)
-coverage_table
+table_coverage
 
 
 ### Coverage table
-coverage_table |>
+table_coverage |>
   gt() |> 
   cols_label(
     lexicon = "Lexicon",
@@ -129,12 +135,12 @@ coverage_table |>
     locations = cells_body()
   ) |> 
   cols_align(align = "center", columns = everything()) |> 
-  gtsave("tables/coverage_table.png")
+  gtsave("tables/01-table_coverage.png")
 
 
 ### Most frequent words - both positive and negative
 ### With the word 'like'
-p1 <- story_tokens |> 
+plot_most_frequent_words_afinn_with_like <- story_tokens |> 
   left_join(afinn, by = "word") |> 
   filter(!is.na(value)) |> 
   mutate(
@@ -177,8 +183,10 @@ p1 <- story_tokens |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
+plot_most_frequent_words_afinn_with_like
 
-p2 <- story_tokens |> 
+
+plot_most_frequent_words_bing_with_like <- story_tokens |> 
   left_join(bing, by = "word") |> 
   filter(!is.na(sentiment)) |> 
   count(word, sentiment, sort = TRUE) |> 
@@ -214,11 +222,10 @@ p2 <- story_tokens |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
+plot_most_frequent_words_bing_with_like
 
-p2
 
-
-combined_word_count_with_like <- p1 / p2 +
+plot_combined_word_count_with_like <- plot_most_frequent_words_afinn_with_like / plot_most_frequent_words_bing_with_like +
   plot_annotation(
     title    = "Most frequent positive and negative words",
     subtitle = "Two lexicon approaches: AFINN (top) - Bing (down)",
@@ -230,12 +237,12 @@ combined_word_count_with_like <- p1 / p2 +
       plot.background = element_rect(fill = "#cbe8f5", color = NA)
     )
   )
-combined_word_count_with_like 
+
+plot_combined_word_count_with_like 
 
 
-
-ggsave("plots/combined_sentiment_with_like.png",
-       plot   = combined_word_count_with_like,
+ggsave("plots/01-plot_combined_word_count_with_like.png",
+       plot = plot_combined_word_count_with_like,
        width  = 12,
        height = 18,    # tall to accommodate 4 stacked plots
        dpi    = 300,
@@ -243,13 +250,9 @@ ggsave("plots/combined_sentiment_with_like.png",
 
 
 
-
-
-
-
 ### Most frequent words - both positive and negative
 ### Without the word 'like'
-p3 <- story_tokens |> 
+plot_most_frequent_words_afinn_without_like <- story_tokens |> 
   left_join(afinn, by = "word") |> 
   filter(!is.na(value)) |> 
   filter(word != "like") |> 
@@ -293,10 +296,10 @@ p3 <- story_tokens |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
-p3
+plot_most_frequent_words_afinn_without_like
 
 
-p4 <- story_tokens |> 
+plot_most_frequent_words_bing_without_like <- story_tokens |> 
   left_join(bing, by = "word") |> 
   filter(!is.na(sentiment)) |> 
   filter(word != "like") |> 
@@ -333,10 +336,10 @@ p4 <- story_tokens |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
-p4
+plot_most_frequent_words_bing_without_like
 
 
-combined_word_count_without_like <- p3 / p4 +
+plot_combined_word_count_without_like <- plot_most_frequent_words_afinn_without_like / plot_most_frequent_words_bing_without_like +
   plot_annotation(
     title    = "Most frequent positive and negative words",
     subtitle = "Two lexicon approaches: AFINN (top) - Bing (down) ('like' removed) ",
@@ -349,20 +352,18 @@ combined_word_count_without_like <- p3 / p4 +
     )
   )
 
+plot_combined_word_count_without_like
 
-combined_word_count_without_like
-
-ggsave("plots/combined_sentiment_without_like.png",
-       plot   = combined_word_count_without_like,
+ggsave("plots/02-plot_combined_word_count_without_like.png",
+       plot   = plot_combined_word_count_without_like,
        width  = 12,
        height = 18,    # tall to accommodate 4 stacked plots
        dpi    = 300,
        bg     = "#cbe8f5")
 
 
-
 ## Emotional arc - AFINN
-emotional_arc_afinn_plot <- story_tokens |> 
+plot_emotional_arc_afinn <- story_tokens |> 
   left_join(afinn, by = "word") |> 
   group_by(paragraph) |> 
   summarize(
@@ -431,8 +432,8 @@ emotional_arc_afinn_plot <- story_tokens |>
   )
 
 ggsave(
-  filename = "plots/05-emotional-arc-afinn.png",
-  plot = emotional_arc_afinn_plot,
+  filename = "plots/03-plot_emotional_arc_afinn.png",
+  plot = plot_emotional_arc_afinn,
   width = 15,
   height = 10,
   dpi = 300
@@ -452,7 +453,6 @@ bing_neg <-  story_tokens |>
   ungroup() |> 
   filter(sentiment == "negative")
 
-
 bing_pos <- story_tokens |>
   left_join(bing, by = "word") |>
   filter(!is.na(sentiment)) |>
@@ -464,7 +464,7 @@ bing_pos <- story_tokens |>
   filter(sentiment == "positive")
 
 
-emotional_proportions_bing_plot <- story_tokens |>
+plot_emotional_proportions_bing <- story_tokens |>
   left_join(bing, by = "word") |>
   filter(!is.na(sentiment)) |>
   group_by(paragraph, sentiment) |>
@@ -533,18 +533,37 @@ emotional_proportions_bing_plot <- story_tokens |>
     legend.position = "bottom"
   )
 
+plot_emotional_proportions_bing
 
 ggsave(
-  filename = "plots/06-emotional_proportions_bing_plot.png",
-  plot = emotional_proportions_bing_plot,
+  filename = "plots/04-plot_emotional_proportions_bing.png",
+  plot = plot_emotional_proportions_bing,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-### NRC
-nrc_emotional_proportions_plot <- story_tokens |> 
+### Filter out paragraph 13 which has 100% negative sentiment
+story_tokens |>
+  left_join(bing, by = "word") |>
+  filter(!is.na(sentiment)) |>
+  group_by(paragraph, sentiment) |>
+  summarize(n = n(), .groups = "drop") |>
+  group_by(paragraph) |>
+  mutate(prop = n / sum(n)) |>
+  ungroup() |> 
+  filter(paragraph == 13)
+
+
+story_tokens |>
+  left_join(bing, by = "word") |>
+  filter(!is.na(sentiment)) |> 
+  filter(paragraph == 13)
+
+
+### NRC emotion profile
+plot_nrc_emotional_proportions <- story_tokens |> 
   left_join(nrc, by = "word", relationship = "many-to-many") |> 
   filter(!is.na(sentiment)) |> 
   group_by(paragraph, sentiment) |> 
@@ -597,10 +616,288 @@ nrc_emotional_proportions_plot <- story_tokens |>
     legend.position = "none"
   )
 
+plot_nrc_emotional_proportions
 
 ggsave(
-  filename = "plots/07-nrc_emotional_proportions_plot.png",
-  plot = nrc_emotional_proportions_plot,
+  filename = "plots/05-plot_nrc_emotional_proportions.png",
+  plot = plot_nrc_emotional_proportions,
+  width = 15,
+  height = 10,
+  dpi = 300
+)
+
+
+### Filter out paragraph 11 which has highest anticipation rate - 37.5%
+story_tibble |> 
+  filter(paragraph == 11)
+
+story_tokens |> 
+  filter(paragraph == 11) |> 
+  left_join(nrc, by = "word", relationship = "many-to-many") |> 
+  filter(!is.na(sentiment)) |> 
+  count(sentiment)
+  
+
+### syuzhet sentiments
+story_scored_syuzhet <- story_tibble |>
+  mutate(syuzhet_score = get_sentiment(text, method = "syuzhet"))
+
+# Normalise to –1 / +1
+# syuzhet scores are unbounded, so we divide by the observed maximum
+# to get a scale anchored between –1 and +1
+
+max_abs <- max(abs(story_scored_syuzhet$syuzhet_score))
+max_abs
+
+story_scored_syuzhet <- story_scored_syuzhet |> 
+  mutate(normalized_score = syuzhet_score / max_abs)
+
+# Overall valence = mean of all normalised line scores
+overall_valence_syuzhet <- mean(story_scored_syuzhet$normalized_score)
+
+cat(sprintf("Overall emotional valence: %+.3f\n", overall_valence_syuzhet))
+
+
+plot_syuzhet_story_scored <- story_scored_syuzhet |>
+  ggplot(aes(x = paragraph, y = normalized_score)) +
+  geom_col(aes(fill = normalized_score), show.legend = FALSE) +
+  scale_fill_gradient2(
+    low      = "#bd1515",
+    mid      = "grey90",
+    high     = "#2a9d8f",
+    midpoint = 0
+  ) +
+  geom_label(
+    aes(label = round(normalized_score, 2),
+        vjust = ifelse(normalized_score >= 0, -0.6, 1.6)), # above positive, below negative bars
+    colour   = "black",
+    fontface = "bold",
+    size     = 3.5,
+    fill     = "white",   # label background
+    linewidth = 0.2      # border thickness around label box
+  ) +
+  scale_x_continuous(breaks = seq(1, max(story_scored_syuzhet$paragraph), by = 1)) +
+  scale_y_continuous(limits = c(
+    min(story_scored_syuzhet$normalized_score) - 0.2,
+    max(story_scored_syuzhet$normalized_score) + 0.2
+  )) +
+  labs(
+    title    = "'Paper Menagerie — Emotional Arc'",
+    subtitle = "Paragraph-by-paragraph emotional trajectory (syuzhet)",
+    x        = "Paragraph",
+    y        = "Sentiment Score"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle     = element_text(size = 11, hjust = 0.5),
+    axis.text         = element_text(color = "black"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_line(color = "gray30", linewidth = 0.1),
+    panel.grid.minor  = element_blank(),
+    plot.background   = element_rect(fill = "#cbe8f5", color = NA),
+    panel.background  = element_rect(fill = "#cbe8f5", color = NA)
+  )
+
+plot_syuzhet_story_scored
+
+ggsave(
+  filename = "plots/06-plot_syuzhet_story_scored.png",
+  plot = plot_syuzhet_story_scored,
+  width = 15,
+  height = 10,
+  dpi = 300
+)
+
+
+### Sentence level division
+
+### Split sentences
+story_sentences <- story_tibble |> 
+  unnest_sentences(sentence, text) |> 
+  mutate(
+    sentence = str_remove(sentence, "^\\d+\\s+"),
+    sentence = str_to_sentence(sentence),
+    sentence_id = row_number()
+  ) |> 
+  select(sentence_id, paragraph, sentence)
+
+
+### Tokenize sentences - Not used here but sentence id can be used to group
+sentence_tokens <- story_sentences |> 
+  unnest_tokens(word, sentence)
+
+
+# Scoring and then normalizing the scores
+# syuzhet scores are unbounded, so we divide by the observed maximum
+# Normalise to –1 / +1 to get a scale anchored between –1 and +1
+story_scored_syuzhet_sentence <- story_sentences |>
+  mutate(syuzhet_score = get_sentiment(sentence, method = "syuzhet"))
+
+max_abs_sentences <- max(abs(story_scored_syuzhet_sentence$syuzhet_score))
+max_abs_sentences
+
+story_scored_syuzhet_sentence <- story_scored_syuzhet_sentence |> 
+  mutate(normalized_score = syuzhet_score / max_abs_sentences)
+
+### Checks
+story_scored_syuzhet_sentence$normalized_score
+
+glimpse(story_scored_syuzhet_sentence)
+summary(story_scored_syuzhet_sentence)
+story_scored_syuzhet_sentence |> 
+  filter(syuzhet_score != 0) |> 
+  nrow()
+
+### 5 most positive sentences table
+five_most_positive <- story_scored_syuzhet_sentence |> 
+  slice_max(normalized_score, n = 5, with_ties = FALSE) |> 
+  select(sentence_id, sentence, normalized_score)
+five_most_positive
+
+five_most_positive |>
+  select(sentence, normalized_score) |> 
+  gt() |> 
+  cols_label(
+    sentence = "Sentence",
+    normalized_score = "Sentiment Score"
+  ) |>
+  tab_header(
+    title = "Sentence level sentiments: Five most positive sentences (syuzhet)",
+    subtitle = ""
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#2a9d8f"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_text(color = "white", weight = "bold"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#cbe8f5"),
+    locations = cells_body()
+  ) |> 
+  cols_align(align = "center", columns = everything()) |> 
+  gtsave("tables/02-table_five-most-positive.png")
+
+
+### 5 most negative sentences table
+five_most_negative <- story_scored_syuzhet_sentence |> 
+  slice_min(normalized_score, n = 5, with_ties = FALSE) |> 
+  select(sentence_id, sentence, normalized_score)
+five_most_negative
+
+five_most_negative |>
+  select(sentence, normalized_score) |> 
+  gt() |> 
+  cols_label(
+    sentence = "Sentence",
+    normalized_score = "Sentiment Score"
+  ) |>
+  tab_header(
+    title = "Sentence level sentiments: Five most negative sentences (syuzhet)",
+    subtitle = "Three negative sentences ties, so, there 6 sentences in negatives"
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#2a9d8f"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_text(color = "white", weight = "bold"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#cbe8f5"),
+    locations = cells_body()
+  ) |> 
+  cols_align(align = "center", columns = everything()) |> 
+  gtsave("tables/03-table_five-most-negative.png")
+
+
+extremes <- bind_rows(five_most_positive, five_most_negative) |> 
+  mutate(sentence = str_to_sentence(sentence)) |> 
+  mutate(sentence = str_replace_all(sentence, "\\bi\\b", "I"))
+extremes
+
+#### EMOTIONAL ARC
+plot_syuzhet_sentence <- story_scored_syuzhet_sentence |> 
+  ggplot(aes(x = sentence_id, y = normalized_score)) +
+  geom_smooth(se = FALSE,
+              color = "#2a9d8f",
+              linewidth = 1.2,
+              method = "loess",
+              span = 0.3,
+              bg = NA) + # adjust 0.1-0.5 for smoother/rougher arc
+  annotate("segment",
+           x = 1,
+           xend = 431,
+           y = 0,
+           yend = 0,
+           linetype = "dashed",
+           color = "grey60",
+           linewidth = 0.5) +
+  ## All points - small and faint
+  geom_jitter(aes(color = normalized_score > 0),
+            size = 0.8,
+            alpha = 02,
+            height = 0.008, # tiny vertical jitter only
+            width = 0,       # no horizontal jitter — preserves sentence order  
+            show.legend = FALSE) +
+  # Extreme points larger
+  geom_point(data = extremes,
+             aes(color = normalized_score > 0),
+             size = 3,
+             show.legend = FALSE) +
+  # Labels for extreme sentences
+  geom_label_repel(
+    data = extremes,
+    aes(label = str_wrap(sentence, width = 30)),
+        size = 2.8,
+        fontface = "bold",
+        fill = "white",
+        color = "black",
+        linewidth = 0.2,
+        box.padding = 0.5,
+        max.overlaps = Inf,
+        show.legend = FALSE) +
+      scale_color_manual(
+        values = c("TRUE" = "#2a9d8f",
+                   "FALSE" = "#bd1515")) +
+      scale_x_continuous(
+        breaks = seq(1, 431, by = 43), # roughly every 10% of story
+        labels = seq(1, 431, by = 43)
+      ) +
+      scale_y_continuous(
+        limits = c(-1.2, 1.2),
+        oob = squish,
+        breaks = c(-1.0, -0.5, 0, 0.5, 1.0),
+        labels = c("1.0", "-0.5", "Neutral", "0.5", "1.5")
+      ) +
+      labs(
+        title = "Paper Menagerie — Sentence-Level Emotional Arc",
+        subtitle = "Syuzhet scores normalized to -1/+1 · Labelled sentences are emotional extremes",
+        x = "Sentence",
+        y = "Normalized Sentiment Score",
+        caption = "Ken Liu, Paper Menagerie (2011)"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle     = element_text(size = 11, hjust = 0.5),
+        axis.text         = element_text(color = "black"),
+        panel.grid.major.y = element_blank(),
+        panel.grid.major.x = element_line(color = "gray30", linewidth = 0.1),
+        panel.grid.minor  = element_blank(),
+        plot.background   = element_rect(fill = "#cbe8f5", color = NA),
+        panel.background  = element_rect(fill = "#cbe8f5", color = NA)
+      )
+      
+plot_syuzhet_sentence
+
+ggsave(
+  filename = "plots/07-plot_syuzhet_sentence.png",
+  plot = plot_syuzhet_sentence,
   width = 15,
   height = 10,
   dpi = 300
