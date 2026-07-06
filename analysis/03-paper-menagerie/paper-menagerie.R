@@ -13,6 +13,10 @@ library(gt)        # Markdown table generation and saving via kable() and gtsave
 library(syuzhet)   # Line-level scoring without tokenisation; better for sentences or paragraphs
 library(patchwork) # Combined plots
 library(ggrepel)   # Plot readability
+library(httr2)     #     
+library(jsonlite)  #  
+
+
 
 
 # DATA PREPARATION
@@ -902,4 +906,136 @@ ggsave(
   height = 10,
   dpi = 300
 )
+
+
+### Bonus - LLM Approach
+gemma4_latest <- "gemma4:latest"
+
+
+score_local <- function(sentence_text, model = "llama3.2:latest") {
+  req <- request("http://localhost:11434/api/generate") |> 
+    req_method("POST") |> # Force POST method
+    req_body_json(list(
+      model = model,
+      prompt = paste0(
+        "Analyze the sentiment of the provided sentence. ",
+        "Return a 'valence' score strictly between -1.0 (extremely negative) and 1.0 (extremely positive). ",
+        "0.0 is perfectly neutral. Provide only valid JSON with the following structure: ",
+        '{"valence": <float>, "primary_emotion": "<word>", "reasoning": "<short phrase>"}',
+        "\n\nSentence: \"", sentence_text, "\""
+      ),
+      stream = FALSE
+    ))
+  
+  # Perform the request and store the result in 'resp'
+  resp <- req_perform(req)
+  
+  # Now pass the 'resp' object to extract the body
+  txt <- resp_body_json(resp)$response
+  
+  # Clean potential markdown wrapping
+  txt <- gsub("```json|```", "", txt)
+  
+  return(fromJSON(txt))
+}
+
+
+example_sentences <- story_scored_syuzhet_sentence |> 
+  filter(sentence_id %in% extremes$sentence_id) |> 
+  select(sentence_id, sentence, normalized_score) |> 
+  arrange(desc(normalized_score)) |>
+  rename(syuzhet_score = normalized_score)
+  
+
+# This will return NA instead of crashing if a single sentence fails
+safe_score <- possibly(score_local, otherwise = list(valence = NA, primary_emotion = NA, reasoning = NA))
+
+## llama3.2:latest
+# Process only the first few to test, then use map_dfr for the full list
+results_llama3.2_latest <- example_sentences |>
+  mutate(sentiment_data = map(sentence, ~score_local(.x))) |>
+  tidyr::unnest_wider(sentiment_data)
+results_llama3.2_latest
+
+
+## gemma4_latest
+results_gemma4_latest <- example_sentences |>
+  mutate(sentiment_data = map(sentence, ~score_local(.x, model = gemma4_latest))) |>
+  tidyr::unnest_wider(sentiment_data)
+results_gemma4_latest
+
+
+### Build a comparison table with two models and syuzhet
+## llama3.2:latest
+results_llama3.2_latest |>
+  select(sentence, syuzhet_score, valence, primary_emotion, reasoning) |> 
+  mutate(syuzhet_score = round(syuzhet_score, 1), 
+         valence = round(valence, 1)) |> 
+  gt() |> 
+  cols_label(
+    sentence = "Sentence",
+    syuzhet_score = "Syuzhet Score",
+    valence = "LLM Score",
+    primary_emotion = "Primary Emotion",
+    reasoning = "LLM Reasoning"
+  ) |>
+  tab_header(
+    title = "Comparison of Syuzhet Results and Local LLM llama3.2:latest",
+    subtitle = "Both syuzhet and LLM scores normalized"
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#2a9d8f"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_text(color = "white", weight = "bold"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#cbe8f5"),
+    locations = cells_body()
+  ) |> 
+  cols_align(align = "center", columns = everything()) |> 
+  gtsave("tables/04-table_syuzhet_vs_llama3.2:latest.png")
+
+
+## gemma4_latest
+results_gemma4_latest |>
+  select(sentence, syuzhet_score, valence, primary_emotion, reasoning) |> 
+  mutate(syuzhet_score = round(syuzhet_score, 1), 
+         valence = round(valence, 1)) |> 
+  gt() |> 
+  cols_label(
+    sentence = "Sentence",
+    syuzhet_score = "Syuzhet Score",
+    valence = "LLM Score",
+    primary_emotion = "Primary Emotion",
+    reasoning = "LLM Reasoning"
+  ) |>
+  tab_header(
+    title = "Comparison of Syuzhet Results and Local LLM gemma4:latest",
+    subtitle = "Both syuzhet and LLM scores normalized"
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#2a9d8f"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_text(color = "white", weight = "bold"),
+    locations = cells_column_labels()
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "#cbe8f5"),
+    locations = cells_body()
+  ) |> 
+  cols_align(align = "center", columns = everything()) |> 
+  gtsave("tables/05-table_syuzhet_vs_gemma4:latest.png")
+
+
+
+
+
+
+
+
 
