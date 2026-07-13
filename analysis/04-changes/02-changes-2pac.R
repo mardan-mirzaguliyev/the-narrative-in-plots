@@ -18,6 +18,7 @@ library(httr2)
 library(jsonlite)
 library(ollamar)
 library(patchwork)
+library(writexl)
 
 
 # DATA PREPARATION
@@ -470,5 +471,70 @@ ggsave(
   dpi = 300
 )
 
+
+
+## Scored objects
+lyrics_scored_2pac_syuzhet |>
+  select(-syuzhet_score) |> 
+  bind_cols(
+    results_2pac_llama3_2_latest |> 
+      select(llama3_label = emotion_label, llama3_conf = confidence_score),
+    results_2pac_phi4_mini_latest |> 
+      select(phi4_label = emotion_label, phi4_conf = confidence_score),
+    results_2pac_final_roberta |> 
+      select(roberta_label = emotion_label, roberta_conf = confidence_score),
+    results_2pac_claude_sonnet_5 |> 
+      select(claude_label = emotion_label, claude_conf = confidence_score)
+  ) |>
+  mutate(normalized_score = percent(normalized_score, accuracy = 0.1)) |> 
+  gt() |> 
+  cols_label(
+    section = "Section",
+    line = "Line Number",
+    text = "Line Text",
+    normalized_score = "Syzhet Score",
+    llama3_label = "Llama 3 Label",
+    llama3_conf = "Llama 3 conf",
+    phi4_label = "Phi 4",
+    phi4_conf = "Ph 4 Conf",
+    roberta_label = "Twitter RoBERTa",
+    roberta_conf = "Twitter RoBERTa conf",
+    claude_label = "Sonnet 5 Label",
+    claude_conf = "Sonnet 5 conf"
+  ) |>
+  tab_header(
+    title = "Line by Line ",
+    subtitle = "Labels differ from model to model"
+  ) |> 
+  # Header styling
+  tab_style(
+    style = list(cell_fill(color = "#2a9d8f"), cell_text(color = "white", weight = "bold")),
+    locations = cells_column_labels()
+  ) |> 
+  # Base Body Styling (all rows)
+  tab_style(
+    style = cell_fill(color = "#cbe8f5"),
+    locations = cells_body()
+  ) |>
+  gtsave("tables/02-scores_2pac_merged.png")
+
+
+
+# Changes, 2Pac - Combined
+
+lyrics_scored_2pac_syuzhet |>
+  select(-syuzhet_score) |> 
+  bind_cols(
+    results_2pac_llama3_2_latest |> 
+      select(llama3_label = emotion_label, llama3_conf = confidence_score),
+    results_2pac_phi4_mini_latest |> 
+      select(phi4_label = emotion_label, phi4_conf = confidence_score),
+    results_2pac_final_roberta |> 
+      select(roberta_label = emotion_label, roberta_conf = confidence_score),
+    results_2pac_claude_sonnet_5 |> 
+      select(claude_label = emotion_label, claude_conf = confidence_score)
+  ) |>
+  mutate(normalized_score = percent(normalized_score, accuracy = 0.1)) |> 
+  write_xlsx("tables/changes_2pac.xlsx")
 
 

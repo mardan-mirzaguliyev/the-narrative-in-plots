@@ -397,3 +397,18 @@ ggsave(
 )
 
 
+
+# Changes, Kino - Combined
+
+results_kino_llama3_2_latest |> 
+  rename(llama3_label = emotion_label, llama3_conf = confidence_score) |> 
+  bind_cols(
+    results_kino_phi4_mini_latest |> 
+      select(phi4_label = emotion_label, phi4_conf = confidence_score),
+    lyrics_kino_scored_cedr_m7_final |> 
+      select(roberta_label = emotion_label, roberta_conf = confidence_score),
+    kino_claude_sonnet_5 |> 
+      select(claude_label = emotion_label, claude_conf = confidence_score)
+  ) |> 
+  write_xlsx("tables/changes_kino.xlsx")
+
