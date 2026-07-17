@@ -844,7 +844,7 @@ plot_syuzhet_sentence <- story_scored_syuzhet_sentence |>
   ## All points - small and faint
   geom_jitter(aes(color = normalized_score > 0),
             size = 0.8,
-            alpha = 02,
+            alpha = 0.2,
             height = 0.008, # tiny vertical jitter only
             width = 0,       # no horizontal jitter — preserves sentence order  
             show.legend = FALSE) +
