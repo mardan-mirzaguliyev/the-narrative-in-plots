@@ -578,7 +578,7 @@ plot_nrc_emotional_proportions <- story_tokens |>
   select(-n) |> 
   filter(!sentiment %in% c("positive", "negative")) |> 
   mutate(
-    semtiment = fct_relevel(sentiment,
+    sentiment = fct_relevel(sentiment,
                             "joy", "trust", "anticipation", "surprise",
                             "anger", "disgust", "fear", "sadness")) |> 
   ggplot(aes(x = paragraph, y = sentiment, fill = prop)) +

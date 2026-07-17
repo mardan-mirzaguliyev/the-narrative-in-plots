@@ -1,42 +1,80 @@
+library(httr2)
+library(ollamar)
+library(reticulate)
+library(purrr)
+library(jsonlite)
+library(tidyverse)
+library(pdftools)
+library(stringr)
+library(tibble)
+
+
 # Local LLM connection
-
-### phi4-mini:latest
-phi4_mini_latest <- "phi4-mini:latest"
-
-
-score_local_llm <- function(text_line, model = "llama3.2:latest") {
-  # Define the core logic within a tryCatch to handle failures internally
-  result <- tryCatch({
-    promp_text <- paste("You are a sentiment analysis API.
-                        Return ONLY a JSON object with keys 'emotion_label' and 'confidence_score'.
-                        Allowed labels: Joy, Optimism, Anger, Sadness, Neutral. Input text:", text_line)
+score_local_llm <- function(text_col, model = "llama3.2:latest") {
+  
+  system_prompt <- '
+  You are a professional sentiment analysis engine for literary text.
+  Analyze the emotional tone of the provided text and output a single JSON object matching this exact schema:
+{
+  "sentiment": string,   // exactly one of: "Trust" | "Fear" | "Sadness" | "Anger" | "Surprise" | "Disgust" | "Joy" | "Anticipation" | "Neutral"
+  "confidence_score": number  // 0.0–1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)
+}
+Rules:
+1. Output ONLY the raw JSON object. No markdown code fences, no backticks, no preamble, no explanation, no trailing text.
+2. Choose exactly one sentiment label, even when the text expresses mixed emotions — pick the single most dominant one.
+3. If the text is ambiguous or blended, still choose the most probable label, but assign confidence_score below 0.5.
+4. If the input is empty, whitespace-only, or nonsensical (not natural language), output {"sentiment": "Neutral", "confidence_score": 0.0}.
+5. Base your judgment on the emotional content of the text itself, not on real-world factual accuracy or your own opinion of the content.
+6. Do not add, remove, or rename JSON keys. Do not wrap the object in an array.
+Examples:
+Input: "The old house creaked, and she felt the walls closing in around her."
+Output: {"sentiment": "Fear", "confidence_score": 0.82}
+Input: "asdkj 12341 !!!"
+Output: {"sentiment": "Neutral", "confidence_score": 0.0}'
+  
+  valid_labels <- c("Trust", "Fear", "Sadness", "Anger", "Surprise", 
+                    "Disgust", "Joy", "Anticipation", "Neutral")
+  
+  json_schema <- list(
+    type = "object",
+    properties = list(
+      sentiment = list(type = "string", enum = valid_labels),
+      confidence_score = list(type = "number")
+    ),
+    required = list("sentiment", "confidence_score")
+  )
+  
+  tryCatch({
     
     res <- generate(
       model = model,
-      prompt = promp_text,
+      prompt = {{ text_col }},
+      system = system_prompt,
+      format = json_schema,
       output = "text",
       temperature = 0
     )
     
-    # Extract JSON string
-    json_start <- regexpr("\\{", res)
-    json_end <- regexpr("\\}", res)
-    json_str <- substr(res, json_start, json_end)
+    parsed <- fromJSON(res)
     
-    # Parse
-    parsed <- fromJSON(json_str)
+    if (is.null(parsed$sentiment) || !parsed$sentiment %in% valid_labels) {
+      message("Invalid/missing sentiment label for input: ", 
+              substr({{ text_col }}, 1, 60), " | got: ", parsed$sentiment %||% "NULL")
+      parsed$sentiment <- "Neutral"
+    }
     
-    
-    # Validate the label
-    if (!parsed$emotion_label %in% c("Joy", "Optimism", "Anger", "Sadness", "Neutral")) {
-      parsed$emotion_label <- "Neutral" 
+    if (is.null(parsed$confidence_score) || !is.numeric(parsed$confidence_score)) {
+      parsed$confidence_score <- 0.0
+    } else {
+      parsed$confidence_score <- pmin(pmax(parsed$confidence_score, 0), 1)  # clamp to [0,1]
     }
     
     return(parsed)
     
   }, error = function(e) {
-    # If the model fails or returns non-JSON, return this default list
-    return(list(emotion_label = "Neutral", confidence_score = 0.0))
+    message("Local LLM call failed for input: ", substr({{ text_col }}, 1, 60), 
+            " | ", conditionMessage(e))
+    return(list(sentiment = "Neutral", confidence_score = 0.0))
   })
 }
 
@@ -69,12 +107,42 @@ get_clean_model_list <- function() {
 get_clean_model_list()
 
 
-## Build the main scoring function
-score_claude_llm <- possibly(function(text_input) {
+## ---- Shared: single source of truth for the prompt ----
+sentiment_system_prompt <- '
+You are a professional sentiment analysis engine for literary text. Analyze the emotional tone of the provided text and output a single JSON object matching this exact schema:
+{
+  "sentiment": string,   // exactly one of: "Trust" | "Fear" | "Sadness" | "Anger" | "Surprise" | "Disgust" | "Joy" | "Anticipation" | "Neutral"
+  "confidence_score": number  // 0.0–1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)
+}
+Rules:
+1. Output ONLY the raw JSON object. No markdown code fences, no backticks, no preamble, no explanation, no trailing text.
+2. Choose exactly one sentiment label, even when the text expresses mixed emotions — pick the single most dominant one.
+3. If the text is ambiguous or blended, still choose the most probable label, but assign confidence_score below 0.5.
+4. If the input is empty, whitespace-only, or nonsensical (not natural language), output {"sentiment": "Neutral", "confidence_score": 0.0}.
+5. Base your judgment on the emotional content of the text itself, not on real-world factual accuracy or your own opinion of the content.
+6. Do not add, remove, or rename JSON keys. Do not wrap the object in an array.
+Examples:
+Input: "The old house creaked, and she felt the walls closing in around her."
+Output: {"sentiment": "Fear", "confidence_score": 0.82}
+Input: "asdkj 12341 !!!"
+Output: {"sentiment": "Neutral", "confidence_score": 0.0}'
+
+## ---- Shared: pulls sentiment JSON out of a `content` block list ----
+## Used by both score_claude_synch() (sync) and parse_batch_result_line() (batch)
+extract_sentiment_json <- function(content_blocks) {
+  text_blocks <- Filter(function(b) b$type == "text", content_blocks)
+  if (length(text_blocks) == 0) return(NULL)
   
-  model_id <- "claude-sonnet-5"
+  content_text <- text_blocks[[1]]$text
+  clean_json <- gsub("(?s).*(\\{.*\\}).*", "\\1", content_text, perl = TRUE) |> trimws()
   
-  # Construct the API request
+  fromJSON(clean_json)
+}
+
+## ================= SYNCHRONOUS PATH =================
+
+score_claude_synch <- function(text_input) {
+  
   req <- request("https://api.anthropic.com/v1/messages") |> 
     req_headers(
       "x-api-key" = Sys.getenv("CLAUDE_API_KEY"),
@@ -82,52 +150,171 @@ score_claude_llm <- possibly(function(text_input) {
       "content-type" = "application/json"
     ) |> 
     req_body_json(list(
-      model = model_id,
-      max_tokens = 100,
-      system =
-        'You are a professional sentiment analysis engine. Your task is to analyze the emotional tone of the provided text and output a single JSON object.
-            Follow these strict constraints:
-              1. Output Format: Return ONLY valid JSON. Do not include markdown code blocks, backticks, or any explanatory preamble.
-              2. Keys Required: 
-                  - "emotion_label": Must be exactly one of: "Joy", "Optimism", "Anger", "Sadness", or "Neutral".
-                  - "confidence_score": A numeric value between 0.0 and 1.0.
-              3. Behavior: 
-                  - Do not provide conversational responses, justifications, or meta-commentary.
-                  - If the input is ambiguous, select the most probable label and assign a lower confidence score.
-                  - If the input is empty or nonsensical, output {"emotion_label": "Neutral", "confidence_score": 0.0}.',
-                  messages = list(list(role = "user", content = text_input))
-      ))
+      model = "claude-sonnet-5",
+      max_tokens = 200,
+      thinking = list(type = "disabled"),
+      system = sentiment_system_prompt,
+      messages = list(list(role = "user", content = text_input))
+    )) |> 
+    req_retry(
+      max_tries = 4,
+      backoff = ~ 2 ^ .x,
+      is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529)
+    )
   
-  # Execute the request
-  resp <- req_perform(req)
-  # Parse the response
-  resp_body <- resp_body_json(resp)
-  
-  content_text <- resp_body$content[[1]]$text
-  
-  # Remove potential markdown code blocks
-  clean_json <- gsub("(?s).*(\\{.*\\}).*", "\\1", content_text, perl = TRUE)
-  clean_json <- trimws(clean_json)
-  
-  # Extract JSON from the string
-  result <- fromJSON(clean_json)
-  
-  return(result)
-  
-}, otherwise = list(emotion_label = NA, confidence_score = NA))
+  tryCatch({
+    
+    resp <- req_perform(req)
+    resp_body <- resp_body_json(resp)
+    
+    parsed <- extract_sentiment_json(resp_body$content)
+    
+    if (is.null(parsed)) {
+      message("No text block returned for input: ", 
+               substr(text_input, 1, 60), " | stop_reason: ", 
+               resp_body$stop_reason %||% "unknown")
+      return(list(sentiment = NA, confidence_score = NA))
+    }
+    
+    parsed
+    
+  }, httr2_http = function(e) {
+    status <- tryCatch(resp_status(e$resp), error = function(e2) NA)
+    body_msg <- tryCatch(resp_body_json(e$resp)$error$message, error = function(e2) conditionMessage(e))
+    message("HTTP error for input: ", substr(text_input, 1, 60), " | status: ", status, " | ", body_msg)
+    list(sentiment = NA, confidence_score = NA)
+    
+  }, error = function(e) {
+    message("Parse/other error for input: ", substr(text_input, 1, 60), " | ", conditionMessage(e))
+    list(sentiment = NA, confidence_score = NA)
+  })
+}
 
-
-## Create a wrapper function that builds a data frame from responses
-analyze_lyrics_claude <- function(lyrics_df) {
-  lyrics_df |>
-    mutate(sentiment_data = map(text, ~score_claude_llm(.x))) |> 
+analyze_text_claude_synch <- function(text_df, text_col) {
+  text_df |>
+    mutate(sentiment_data = map({{ text_col }}, ~score_claude_synch(.x))) |> 
     unnest_wider(sentiment_data)
 }
 
+## ================= BATCH PATH =================
 
+build_batch_requests <- function(df, text_col, id_col) {
+  pmap(list(pull(df, {{ id_col }}), pull(df, {{ text_col }})), function(id, txt) {
+    list(
+      custom_id = paste0("row_", id),
+      params = list(
+        model = "claude-sonnet-5",
+        max_tokens = 200,
+        thinking = list(type = "disabled"),
+        system = list(list(
+          type = "text",
+          text = sentiment_system_prompt,
+          cache_control = list(type = "ephemeral", ttl = "1h")
+        )),
+        messages = list(list(role = "user", content = txt))
+      )
+    )
+  })
+}
 
+submit_batch <- function(requests) {
+  req <- request("https://api.anthropic.com/v1/messages/batches") |>
+    req_headers(
+      "x-api-key" = Sys.getenv("CLAUDE_API_KEY"),
+      "anthropic-version" = "2023-06-01",
+      "content-type" = "application/json"
+    ) |>
+    req_body_json(list(requests = requests)) |>
+    req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
+               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+  
+  tryCatch({
+    req_perform(req) |> resp_body_json() |> pluck("id")
+  }, error = function(e) stop("Batch submission failed: ", conditionMessage(e)))
+}
 
+poll_batch <- function(batch_id, poll_interval = 60) {
+  status_req <- request(paste0("https://api.anthropic.com/v1/messages/batches/", batch_id)) |>
+    req_headers("x-api-key" = Sys.getenv("CLAUDE_API_KEY"), "anthropic-version" = "2023-06-01") |>
+    req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
+               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+  
+  repeat {
+    status <- req_perform(status_req) |> resp_body_json()
+    message("Batch ", batch_id, " status: ", status$processing_status,
+             " | succeeded: ", status$request_counts$succeeded %||% 0,
+             " | errored: ", status$request_counts$errored %||% 0)
+    if (status$processing_status == "ended") return(status)
+    Sys.sleep(poll_interval)
+  }
+}
 
+## Now delegates to the shared helper instead of duplicating extraction logic
+parse_batch_result_line <- function(line) {
+  parsed <- fromJSON(line, simplifyVector = FALSE)
+  custom_id <- parsed$custom_id
+  base <- list(custom_id = custom_id, sentiment = NA, confidence_score = NA)
+  
+  if (parsed$result$type != "succeeded") {
+    message("Batch request failed for ", custom_id, " | type: ", parsed$result$type,
+             " | ", parsed$result$error$message %||% "no error message")
+    return(base)
+  }
+  
+  tryCatch({
+    result <- extract_sentiment_json(parsed$result$message$content)
+    
+    if (is.null(result)) {
+      message("No text block for ", custom_id)
+      return(base)
+    }
+    
+    list(custom_id = custom_id, sentiment = result$sentiment, confidence_score = result$confidence_score)
+    
+  }, error = function(e) {
+    message("Parse error for ", custom_id, " | ", conditionMessage(e))
+    base
+  })
+}
 
+fetch_batch_results <- function(results_url) {
+  results_req <- request(results_url) |>
+    req_headers("x-api-key" = Sys.getenv("CLAUDE_API_KEY"), "anthropic-version" = "2023-06-01") |>
+    req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
+               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+  
+  raw_lines <- req_perform(results_req) |> resp_body_string() |> str_split("\n") |> pluck(1)
+  raw_lines <- raw_lines[nzchar(raw_lines)]
+  
+  map(raw_lines, parse_batch_result_line)
+}
+
+analyze_text_claude_batch <- function(df, text_col, id_col = NULL) {
+  
+  if (is.null(rlang::enexpr(id_col))) {
+    df <- df |> mutate(.row_id = row_number())
+    id_col_sym <- rlang::sym(".row_id")
+    id_is_integer <- TRUE
+  } else {
+    id_col_sym <- rlang::ensym(id_col)
+    id_is_integer <- is.numeric(pull(df, !!id_col_sym))
+  }
+  
+  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym)
+  batch_id <- submit_batch(requests)
+  
+  status <- poll_batch(batch_id)
+  results_list <- fetch_batch_results(status$results_url)
+  
+  extracted_id <- map_chr(results_list, ~ str_remove(.x$custom_id, "^row_"))
+  
+  results_df <- map_dfr(results_list, as_tibble) |>
+    mutate(!!rlang::as_name(id_col_sym) := if (id_is_integer) as.integer(extracted_id) else extracted_id) |>
+    select(-custom_id)
+  
+  saveRDS(results_df, "beijing_sonnet_5.rds")
+  
+  df |> left_join(results_df, by = rlang::as_name(id_col_sym))
+}
 
 
