@@ -341,12 +341,165 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL,
 }
 
 
+
+get_or_run_local <- function(df, text_col, output_name, model = "llama3.2:latest") {
+  
+  # Sanitize model string for file names — local model names contain ":" 
+  model_tag <- str_replace_all(model, "[:/]", "-")
+  expected_path <- paste0(output_name, "_", model_tag, ".rds")
+  
+  if (file.exists(expected_path)) {
+    message("Found existing results at: ", expected_path, " — loading from disk.")
+    readRDS(expected_path)
+    
+  } else {
+    message("No existing results found at: ", expected_path, " — running local scoring.")
+    result <- analyze_text_local(df, {{ text_col }}, model = model)
+    
+    saveRDS(result, expected_path)
+    message("Results saved to: ", expected_path)
+    
+    result
+  }
+}
+
+
+get_or_run_claude_batch <- function(df, text_col, id_col = NULL, 
+                                    output_name, model = "claude-sonnet-5") {
+  
+  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), ".rds")
+  
+  generated_id <- is.null(rlang::enexpr(id_col))
+  
+  if (generated_id) {
+    df <- df |> mutate(.row_id = row_number())
+    id_col_sym <- rlang::sym(".row_id")
+  } else {
+    id_col_sym <- rlang::ensym(id_col)
+  }
+  
+  if (file.exists(expected_path)) {
+    message("Found existing results at: ", expected_path, " — loading from disk.")
+    results_df <- readRDS(expected_path)
+    
+    out <- df |> 
+      left_join(results_df, by = rlang::as_name(id_col_sym)) |> 
+      arrange(!!id_col_sym)
+    
+  } else {
+    message("No existing results found at: ", expected_path, " — running batch.")
+    out <- analyze_text_claude_batch(df, {{ text_col }}, !!id_col_sym, 
+                                     output_name = output_name, model = model)
+  }
+  
+  if (generated_id) out <- out |> select(-.row_id)
+  
+  out
+}
+
+
+# Hugging Face
+## ================= SETUP =================
+
+use_condaenv("r-reticulate", required = TRUE)
+
+hf_hub <- import("huggingface_hub")
+
+hf_token <- Sys.getenv("HF_TOKEN")
+if (hf_token == "") {
+  stop("Error: HF_TOKEN not found! Please check your .Renviron file.")
+}
+
+hf_client <- hf_hub$InferenceClient(
+  provider = "hf-inference",
+  api_key = hf_token
+)
+
+## ================= SCORING FUNCTION =================
+
+score_hf_inference <- function(text_input, 
+                               model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest",
+                               max_tries = 3, retry_delay = 5) {
+  
+  attempt <- 1
+  
+  repeat {
+    result <- tryCatch({
+      res <- hf_client$text_classification(
+        text = text_input,
+        model = model,
+        top_k = 1L
+      )
+      
+      list(sentiment = str_to_title(res[[1]]$label),
+           confidence_score = as.numeric(res[[1]]$score))
+      
+    }, error = function(e) {
+      # HF serverless models can return a transient error while "cold starting" —
+      # worth distinguishing that from a genuine failure via the error message
+      is_loading <- str_detect(conditionMessage(e), regex("503|loading|currently loading", ignore_case = TRUE))
+      list(error = TRUE, is_loading = is_loading, message = conditionMessage(e))
+    })
+    
+    if (is.null(result$error)) return(result)  # success
+    
+    if (result$is_loading && attempt < max_tries) {
+      message("Model loading, retrying (", attempt, "/", max_tries, ") for: ", substr(text_input, 1, 60))
+      Sys.sleep(retry_delay)
+      attempt <- attempt + 1
+      next
+    }
+    
+    message("Failed for input: ", substr(text_input, 1, 60), " | ", result$message)
+    return(list(sentiment = NA, confidence_score = NA))
+  }
+}
+
+## ================= SYNCHRONOUS WRAPPER =================
+
+analyze_text_hf <- function(df, text_col, 
+                            model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest") {
+  df |>
+    mutate(sentiment_data = map({{ text_col }}, ~score_hf_inference(.x, model = model))) |> 
+    unnest_wider(sentiment_data)
+}
+
+## ================= CACHE-AWARE ORCHESTRATOR =================
+
+get_or_run_hf <- function(df, text_col, output_name, 
+                          model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest") {
+  
+  # Sanitize model string for filenames (contains "/")
+  model_tag <- str_replace_all(model, "[:/]", "-")
+  expected_path <- paste0(output_name, "_", model_tag, ".rds")
+  
+  if (file.exists(expected_path)) {
+    message("Found existing results at: ", expected_path, " — loading from disk.")
+    readRDS(expected_path)
+    
+  } else {
+    message("No existing results found at: ", expected_path, " — running scoring.")
+    result <- analyze_text_hf(df, {{ text_col }}, model = model)
+    
+    saveRDS(result, expected_path)
+    message("Results saved to: ", expected_path)
+    
+    result
+  }
+}
+
+
 # Wrapper functions
 
 # 1. analyze_text_local(df, text_col, model = "llama3.2:latest")
-
 # 2. analyze_text_local(text_df, text_col, model = "claude-sonnet-5")
-
 # 3. analyze_text_claude_batch(df, text_col, id_col = NULL, output_name, model = "claude-sonnet-5")
+# 4. analyze_text_hf <- function(df, text_col, model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest") 
+
+# Main orchestrator functions
+# 1. get_or_run_local(df, text_col, output_name, model = "llama3.2:latest")
+# 2. get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name, model = "claude-sonnet-5") 
+# 3. get_or_run_hf(df, text_col, output_name, model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest")
+
 
 

@@ -190,29 +190,6 @@ ggsave(
 
 ### LLM based analysis
 ### llama3.2:latest
-
-get_or_run_local <- function(df, text_col, output_name, model = "llama3.2:latest") {
-  
-  # Sanitize model string for file names — local model names contain ":" 
-  model_tag <- str_replace_all(model, "[:/]", "-")
-  expected_path <- paste0(output_name, "_", model_tag, ".rds")
-  
-  if (file.exists(expected_path)) {
-    message("Found existing results at: ", expected_path, " — loading from disk.")
-    readRDS(expected_path)
-    
-  } else {
-    message("No existing results found at: ", expected_path, " — running local scoring.")
-    result <- analyze_text_local(df, {{ text_col }}, model = model)
-    
-    saveRDS(result, expected_path)
-    message("Results saved to: ", expected_path)
-    
-    result
-  }
-}
-
-
 beijing_llama3_2 <- beijing_sentences |>
   get_or_run_local(sentence, output_name = "beijing_local", model = "llama3.2:latest")
 
@@ -332,32 +309,6 @@ ggsave(
 ### Claude Sonnet 5
 
 # Batch — full run, explicit output name, saves as "beijing_claude_sonnet-5.rds"
-get_or_run_claude_batch <- function(df, text_col, id_col = NULL, 
-                                    output_name, model = "claude-sonnet-5") {
-  
-  # Must match the exact naming logic inside analyze_text_claude_batch()
-  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), ".rds")
-  
-  if (file.exists(expected_path)) {
-    message("Found existing results at: ", expected_path, " — loading from disk.")
-    results_df <- readRDS(expected_path)
-    
-    # Still reconstruct the full joined table, same shape as a fresh batch run would give
-    id_col_sym <- if (is.null(rlang::enexpr(id_col))) rlang::sym(".row_id") else rlang::ensym(id_col)
-    
-    df |> 
-      left_join(results_df, by = rlang::as_name(id_col_sym)) |> 
-      arrange(!!id_col_sym)
-    
-  } else {
-    message("No existing results found at: ", expected_path, " — running batch.")
-    analyze_text_claude_batch(df, {{ text_col }}, !!rlang::enexpr(id_col), 
-                              output_name = output_name, model = model)
-  }
-}
-
-
-
 beijing_sonnet_5 <- beijing_sentences |> 
   get_or_run_claude_batch(sentence, sentence_id, output_name = "beijing_claude")
 
