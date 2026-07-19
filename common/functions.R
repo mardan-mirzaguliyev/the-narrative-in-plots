@@ -79,6 +79,14 @@ Output: {"sentiment": "Neutral", "confidence_score": 0.0}'
 }
 
 
+## Synchronous wrapper for local scoring — mirrors analyze_text_claude_synch()
+analyze_text_local <- function(df, text_col, model = "llama3.2:latest") {
+  df |>
+    mutate(sentiment_data = map({{ text_col }}, ~score_local_llm(.x, model = model))) |> 
+    unnest_wider(sentiment_data)
+}
+
+
 # Claude API Connection
 
 Sys.getenv("CLAUDE_API_KEY")
@@ -107,16 +115,17 @@ get_clean_model_list <- function() {
 get_clean_model_list()
 
 
-## ---- Shared: single source of truth for the prompt ----
+## ================= SHARED =================
+
 sentiment_system_prompt <- '
 You are a professional sentiment analysis engine for literary text. Analyze the emotional tone of the provided text and output a single JSON object matching this exact schema:
 {
   "sentiment": string,   // exactly one of: "Trust" | "Fear" | "Sadness" | "Anger" | "Surprise" | "Disgust" | "Joy" | "Anticipation" | "Neutral"
-  "confidence_score": number  // 0.0–1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)
+  "confidence_score": number  // 0.0-1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)
 }
 Rules:
 1. Output ONLY the raw JSON object. No markdown code fences, no backticks, no preamble, no explanation, no trailing text.
-2. Choose exactly one sentiment label, even when the text expresses mixed emotions — pick the single most dominant one.
+2. Choose exactly one sentiment label, even when the text expresses mixed emotions - pick the single most dominant one.
 3. If the text is ambiguous or blended, still choose the most probable label, but assign confidence_score below 0.5.
 4. If the input is empty, whitespace-only, or nonsensical (not natural language), output {"sentiment": "Neutral", "confidence_score": 0.0}.
 5. Base your judgment on the emotional content of the text itself, not on real-world factual accuracy or your own opinion of the content.
@@ -127,8 +136,8 @@ Output: {"sentiment": "Fear", "confidence_score": 0.82}
 Input: "asdkj 12341 !!!"
 Output: {"sentiment": "Neutral", "confidence_score": 0.0}'
 
-## ---- Shared: pulls sentiment JSON out of a `content` block list ----
-## Used by both score_claude_synch() (sync) and parse_batch_result_line() (batch)
+## Pulls sentiment JSON out of a `content` block list.
+## Used by both score_claude_synch() (sync) and parse_batch_result_line() (batch).
 extract_sentiment_json <- function(content_blocks) {
   text_blocks <- Filter(function(b) b$type == "text", content_blocks)
   if (length(text_blocks) == 0) return(NULL)
@@ -141,7 +150,7 @@ extract_sentiment_json <- function(content_blocks) {
 
 ## ================= SYNCHRONOUS PATH =================
 
-score_claude_synch <- function(text_input) {
+score_claude_synch <- function(text_input, model = "claude-sonnet-5") {
   
   req <- request("https://api.anthropic.com/v1/messages") |> 
     req_headers(
@@ -150,7 +159,7 @@ score_claude_synch <- function(text_input) {
       "content-type" = "application/json"
     ) |> 
     req_body_json(list(
-      model = "claude-sonnet-5",
+      model = model,
       max_tokens = 200,
       thinking = list(type = "disabled"),
       system = sentiment_system_prompt,
@@ -171,8 +180,8 @@ score_claude_synch <- function(text_input) {
     
     if (is.null(parsed)) {
       message("No text block returned for input: ", 
-               substr(text_input, 1, 60), " | stop_reason: ", 
-               resp_body$stop_reason %||% "unknown")
+              substr(text_input, 1, 60), " | stop_reason: ", 
+              resp_body$stop_reason %||% "unknown")
       return(list(sentiment = NA, confidence_score = NA))
     }
     
@@ -190,20 +199,21 @@ score_claude_synch <- function(text_input) {
   })
 }
 
-analyze_text_claude_synch <- function(text_df, text_col) {
+analyze_text_claude_synch <- function(text_df, text_col, model = "claude-sonnet-5") {
   text_df |>
-    mutate(sentiment_data = map({{ text_col }}, ~score_claude_synch(.x))) |> 
+    mutate(sentiment_data = map({{ text_col }}, ~score_claude_synch(.x, model = model))) |> 
     unnest_wider(sentiment_data)
 }
 
+
 ## ================= BATCH PATH =================
 
-build_batch_requests <- function(df, text_col, id_col) {
+build_batch_requests <- function(df, text_col, id_col, model = "claude-sonnet-5") {
   pmap(list(pull(df, {{ id_col }}), pull(df, {{ text_col }})), function(id, txt) {
     list(
       custom_id = paste0("row_", id),
       params = list(
-        model = "claude-sonnet-5",
+        model = model,
         max_tokens = 200,
         thinking = list(type = "disabled"),
         system = list(list(
@@ -226,7 +236,7 @@ submit_batch <- function(requests) {
     ) |>
     req_body_json(list(requests = requests)) |>
     req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
-               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+              is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
   
   tryCatch({
     req_perform(req) |> resp_body_json() |> pluck("id")
@@ -237,19 +247,18 @@ poll_batch <- function(batch_id, poll_interval = 60) {
   status_req <- request(paste0("https://api.anthropic.com/v1/messages/batches/", batch_id)) |>
     req_headers("x-api-key" = Sys.getenv("CLAUDE_API_KEY"), "anthropic-version" = "2023-06-01") |>
     req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
-               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+              is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
   
   repeat {
     status <- req_perform(status_req) |> resp_body_json()
     message("Batch ", batch_id, " status: ", status$processing_status,
-             " | succeeded: ", status$request_counts$succeeded %||% 0,
-             " | errored: ", status$request_counts$errored %||% 0)
+            " | succeeded: ", status$request_counts$succeeded %||% 0,
+            " | errored: ", status$request_counts$errored %||% 0)
     if (status$processing_status == "ended") return(status)
     Sys.sleep(poll_interval)
   }
 }
 
-## Now delegates to the shared helper instead of duplicating extraction logic
 parse_batch_result_line <- function(line) {
   parsed <- fromJSON(line, simplifyVector = FALSE)
   custom_id <- parsed$custom_id
@@ -257,7 +266,7 @@ parse_batch_result_line <- function(line) {
   
   if (parsed$result$type != "succeeded") {
     message("Batch request failed for ", custom_id, " | type: ", parsed$result$type,
-             " | ", parsed$result$error$message %||% "no error message")
+            " | ", parsed$result$error$message %||% "no error message")
     return(base)
   }
   
@@ -281,7 +290,7 @@ fetch_batch_results <- function(results_url) {
   results_req <- request(results_url) |>
     req_headers("x-api-key" = Sys.getenv("CLAUDE_API_KEY"), "anthropic-version" = "2023-06-01") |>
     req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
-               is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
+              is_transient = \(resp) resp_status(resp) %in% c(429, 500, 502, 503, 529))
   
   raw_lines <- req_perform(results_req) |> resp_body_string() |> str_split("\n") |> pluck(1)
   raw_lines <- raw_lines[nzchar(raw_lines)]
@@ -289,9 +298,14 @@ fetch_batch_results <- function(results_url) {
   map(raw_lines, parse_batch_result_line)
 }
 
-analyze_text_claude_batch <- function(df, text_col, id_col = NULL) {
+
+## Wrapper Batch
+analyze_text_claude_batch <- function(df, text_col, id_col = NULL, 
+                                      output_name, model = "claude-sonnet-5") {
   
-  if (is.null(rlang::enexpr(id_col))) {
+  generated_id <- is.null(rlang::enexpr(id_col))
+  
+  if (generated_id) {
     df <- df |> mutate(.row_id = row_number())
     id_col_sym <- rlang::sym(".row_id")
     id_is_integer <- TRUE
@@ -300,7 +314,7 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL) {
     id_is_integer <- is.numeric(pull(df, !!id_col_sym))
   }
   
-  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym)
+  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym, model = model)
   batch_id <- submit_batch(requests)
   
   status <- poll_batch(batch_id)
@@ -310,11 +324,29 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL) {
   
   results_df <- map_dfr(results_list, as_tibble) |>
     mutate(!!rlang::as_name(id_col_sym) := if (id_is_integer) as.integer(extracted_id) else extracted_id) |>
-    select(-custom_id)
+    select(-custom_id) |> 
+    arrange(!!id_col_sym)   # explicit sort — never trust join/batch return order
   
-  saveRDS(results_df, "beijing_sonnet_5.rds")
+  output_path <- paste0(output_name, "_", str_remove(model, "^claude-"), ".rds")
+  saveRDS(results_df, output_path)
+  message("Batch results saved to: ", output_path)
   
-  df |> left_join(results_df, by = rlang::as_name(id_col_sym))
+  out <- df |> 
+    left_join(results_df, by = rlang::as_name(id_col_sym)) |> 
+    arrange(!!id_col_sym)
+  
+  if (generated_id) out <- out |> select(-.row_id)
+  
+  out
 }
+
+
+# Wrapper functions
+
+# 1. analyze_text_local(df, text_col, model = "llama3.2:latest")
+
+# 2. analyze_text_local(text_df, text_col, model = "claude-sonnet-5")
+
+# 3. analyze_text_claude_batch(df, text_col, id_col = NULL, output_name, model = "claude-sonnet-5")
 
 
