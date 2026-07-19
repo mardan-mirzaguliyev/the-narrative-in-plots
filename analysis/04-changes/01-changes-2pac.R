@@ -123,7 +123,7 @@ plot_2pac_scores_syuzhet <- changes_2pac_syuzhet |>
     subtitle = "Lexicon method: syuzhet package",
     x        = NULL,
     y        = NULL,
-    caption  = "Data: Changes, 2Pac lyrics"
+    caption  = "Data: Changes, 2Pac lyrics (1998)"
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -217,7 +217,7 @@ plot_changes_2pac_llama3_2_latest <- changes_2pac_llama3_2_latest |>
        subtitle = "Model: llama3.2:latest",
        x = NULL,
        y = NULL,
-       caption = "Data: Changes, 2Pac lyrics") +
+       caption = "Data: Changes, 2Pac lyrics (1998)") +
   theme_minimal(base_size = 14) +
   theme(
     plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
@@ -277,7 +277,7 @@ plot_changes_2pac_phi4_mini_latest <- changes_2pac_phi4_mini_latest |>
        subtitle = "Model: phi4-mini:latest",
        x = NULL,
        y = NULL,
-       caption = "Data: Changes, 2Pac lyrics") +
+       caption = "Data: Changes, 2Pac lyrics (1998)") +
   theme_minimal(base_size = 14) +
   theme(
     plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
@@ -309,7 +309,6 @@ changes_2pac_roberta <- changes_2pac_raw |>
 changes_2pac_roberta
 
 
-# Calculate emotion frequency per section
 plot_changes_2pac_roberta <- changes_2pac_roberta |>
   mutate(section = factor(section, levels = section_order_2pac)) |> 
   group_by(section, sentiment) |> 
@@ -336,7 +335,7 @@ plot_changes_2pac_roberta <- changes_2pac_roberta |>
        subtitle = "Model: Twitter-roBERTa",
        x = NULL,
        y = NULL,
-       caption = "Data: Changes, 2Pac lyrics") +
+       caption = "Data: Changes, 2Pac lyrics (1998)") +
   theme_minimal(base_size = 14) +
   theme(
     plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
@@ -393,7 +392,7 @@ plot_changes_2pac_sonnet_5 <- changes_2pac_sonnet_5 |>
        subtitle = "Model: Claude Sonnet 5",
        x = NULL,
        y = NULL,
-       caption = "Data: Changes, 2Pac lyrics") +
+       caption = "Data: Changes, 2Pac lyrics (1998)") +
   theme_minimal(base_size = 14) +
   theme(
     plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),

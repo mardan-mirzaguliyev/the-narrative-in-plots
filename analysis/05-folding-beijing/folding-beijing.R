@@ -162,7 +162,7 @@ plot_emotional_breakdown_nrc <- beijing_nrc |>
              size = 3.5,
              fill = "white",
              linewidth = 0.5) +
-  labs(title = "Neutral Dominates, followed by Anticipation and Trust Lead the Story's Emotional Register",
+  labs(title = "Neutral Dominates, followed by Anticipation and Trust",
        subtitle = "Story-level sentiment breakdown using NRC lexicon",
        caption = "Data: Folding Beijing, Hao Jingfang (2015)",
        x = NULL, y = NULL) +
