@@ -996,7 +996,7 @@ results_llama3.2_latest |>
     locations = cells_body()
   ) |> 
   cols_align(align = "center", columns = everything()) |> 
-  gtsave("tables/04-table_syuzhet_vs_llama3.2:latest.png")
+  gtsave("tables/04-table_syuzhet_vs_llama3_2_latest.png")
 
 
 ## gemma4_latest
@@ -1029,7 +1029,7 @@ results_gemma4_latest |>
     locations = cells_body()
   ) |> 
   cols_align(align = "center", columns = everything()) |> 
-  gtsave("tables/05-table_syuzhet_vs_gemma4:latest.png")
+  gtsave("tables/05-table_syuzhet_vs_gemma4_latest.png")
 
 
 
