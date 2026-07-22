@@ -952,10 +952,10 @@ safe_score <- possibly(score_local, otherwise = list(valence = NA, primary_emoti
 
 ## llama3.2:latest
 # Process only the first few to test, then use map_dfr for the full list
-results_llama3.2_latest <- example_sentences |>
+results_llama3_2_latest <- example_sentences |>
   mutate(sentiment_data = map(sentence, ~score_local(.x))) |>
   tidyr::unnest_wider(sentiment_data)
-results_llama3.2_latest
+results_llama3_2_latest
 
 
 ## gemma4_latest
@@ -967,7 +967,7 @@ results_gemma4_latest
 
 ### Build a comparison table with two models and syuzhet
 ## llama3.2:latest
-results_llama3.2_latest |>
+results_llama3_2_latest |>
   select(sentence, syuzhet_score, valence, primary_emotion, reasoning) |> 
   mutate(syuzhet_score = round(syuzhet_score, 1), 
          valence = round(valence, 1)) |> 
@@ -1030,11 +1030,6 @@ results_gemma4_latest |>
   ) |> 
   cols_align(align = "center", columns = everything()) |> 
   gtsave("tables/05-table_syuzhet_vs_gemma4_latest.png")
-
-
-
-
-
 
 
 
