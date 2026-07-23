@@ -1,4 +1,3 @@
-library(rulexicon)      # Access to RuSentiLex lexicon 
 library(dplyr)          # Data manipulation 
 library(tidyr)          # Reshaping: pivot_wider function
 library(ggplot2)        # Data visualization
@@ -242,16 +241,16 @@ ggsave(
 )
 
 
-### phi4-mini:latest
-phi_4_mini_latest = "phi4-mini:latest"
+### phi4:latest
+phi_4_latest = "phi4:latest"
 
-changes_2pac_phi4_mini_latest <- changes_2pac_raw |>
-  get_or_run_local(text, output_name = "changes_2pac_local", model = phi_4_mini_latest)
+changes_2pac_phi4_latest <- changes_2pac_raw |>
+  get_or_run_local(text, output_name = "changes_2pac_local", model = phi_4_latest)
 
-changes_2pac_phi4_mini_latest
+changes_2pac_phi4_latest
 
 
-plot_changes_2pac_phi4_mini_latest <- changes_2pac_phi4_mini_latest |> 
+plot_changes_2pac_phi4_latest <- changes_2pac_phi4_mini_latest |> 
   mutate(section = factor(section, levels = section_order_2pac)) |> 
   group_by(section, sentiment) |> 
   summarize(count = n(),
@@ -274,7 +273,7 @@ plot_changes_2pac_phi4_mini_latest <- changes_2pac_phi4_mini_latest |>
     lineheight = 0.8 
   ) +
   labs(title = "Emotional Distribution",
-       subtitle = "Model: phi4-mini:latest",
+       subtitle = "Model: phi4:latest",
        x = NULL,
        y = NULL,
        caption = "Data: Changes, 2Pac lyrics (1998)") +
@@ -290,11 +289,11 @@ plot_changes_2pac_phi4_mini_latest <- changes_2pac_phi4_mini_latest |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
-plot_changes_2pac_phi4_mini_latest
+plot_changes_2pac_phi4_latest
 
 
 ggsave(
-  filename = "plots/03-plot_changes_2pac_phi4_mini_latest.png",
+  filename = "plots/03-plot_changes_2pac_phi4_latest.png",
   plot = plot_changes_2pac_phi4_mini_latest,
   width = 15,
   height = 10,
