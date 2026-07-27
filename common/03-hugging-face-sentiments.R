@@ -175,6 +175,68 @@ get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentime
 }
 
 
+# Hugging Face
+py_config() 
+
+options(reticulate.conda_binary = "C:/Users/Mardan/miniconda3/condabin/conda.bat")
+conda_binary()   # should now return the path instead of erroring
+use_condaenv("r-reticulate", required = TRUE)
+
+
+transformers <- import("transformers")
+
+emotion_classifier <- transformers$pipeline(
+  "text-classification",
+  model = "j-hartmann/emotion-english-distilroberta-base"
+)
+
+score_hartmann_local <- function(text_input) {
+  tryCatch({
+    res <- emotion_classifier(text_input)
+    list(sentiment = str_to_title(res[[1]]$label),
+         confidence_score = as.numeric(res[[1]]$score))
+  }, error = function(e) {
+    message("Failed for: ", substr(text_input, 1, 60), " | ", conditionMessage(e))
+    list(sentiment = NA, confidence_score = NA)
+  })
+}
+
+analyze_text_hartmann <- function(df, text_col) {
+  df |>
+    mutate(sentiment_data = map({{ text_col }}, ~score_hartmann_local(.x))) |> 
+    unnest_wider(sentiment_data)
+}
+
+get_or_run_hartmann <- function(df, text_col, output_name) {
+  expected_path <- paste0(output_name, "_hartmann-distilroberta.rds")
+  
+  if (file.exists(expected_path)) {
+    message("Found existing results at: ", expected_path, " — loading from disk.")
+    readRDS(expected_path)
+  } else {
+    message("No existing results found at: ", expected_path, " — running scoring.")
+    result <- analyze_text_hartmann(df, {{ text_col }})
+    saveRDS(result, expected_path)
+    message("Results saved to: ", expected_path)
+    result
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ============================================================================
 # Wrapper functions reference
 # ============================================================================
