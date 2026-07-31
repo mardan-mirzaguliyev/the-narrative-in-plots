@@ -1,14 +1,12 @@
 source("00-shared_objects.R")
 
-
 library(httr2)       # request(), req_headers(), req_body_json(), req_retry(), req_perform()
 library(jsonlite)    # fromJSON()
 library(dplyr)
 library(purrr)        # map(), map_dfr(), map_chr(), pmap()
 library(tidyr)         # unnest_wider()
 library(stringr)      # str_remove(), str_split()
-library(rlang)          # enexpr(), ensym(), as_name(), sym(), %||% — used throughout the id_col generalization
-
+library(rlang)          # enexpr(), ensym(), as_name(), sym(), %||%
 
 
 # ============================================================================
@@ -40,10 +38,28 @@ get_clean_model_list <- function() {
 
 
 ## ================= SYNCHRONOUS PATH =================
+## Unlike Ollama, Claude has no `format`/schema-enforcement parameter —
+## the model is only steered by the system prompt's own instructions.
+## So there's no json_schema argument here; instead, validation/clamping
+## is driven by whichever fields actually come back in `parsed`, the same
+## "derive behavior from what's present" principle used on the local side.
 
-score_claude_synch <- function(text_input, model = "claude-sonnet-5", labels = sentiment_levels) {
+score_claude_synch <- function(text_input, model = "claude-sonnet-5", labels = NULL,
+                               system_prompt = NULL) {
   
-  system_prompt <- get_sentiment_system_prompt(labels)
+  if (is.null(system_prompt)) {
+    if (is.null(labels)) {
+      stop("Must supply `labels` (for the default label-driven prompt) ",
+           "or an explicit `system_prompt`.")
+    }
+    system_prompt <- get_sentiment_system_prompt(labels)
+  }
+  
+  # Empty-list fallback for every call site, shaped to whatever fields a
+  # caller might reasonably expect — extra NULL fields are harmless when
+  # unnest_wider() runs, since R silently drops unused list elements.
+  fallback <- list(sentiment = NA_character_, numeric_score = NA_real_,
+                   confidence_score = NA_real_, reasoning = NA_character_)
   
   req <- request("https://api.anthropic.com/v1/messages") |>
     req_headers(
@@ -75,13 +91,36 @@ score_claude_synch <- function(text_input, model = "claude-sonnet-5", labels = s
       message("No text block returned for input: ",
               substr(text_input, 1, 60), " | stop_reason: ",
               resp_body$stop_reason %||% "unknown")
-      return(list(sentiment = NA, confidence_score = NA, reasoning = NA_character_))
+      return(fallback)
     }
     
-    if (!parsed$sentiment %in% labels) {
-      message("Sentiment outside provided label set for input: ",
-              substr(text_input, 1, 60), " | got: ", parsed$sentiment)
-      parsed$sentiment <- NA_character_
+    returned_fields <- names(parsed)
+    
+    if ("sentiment" %in% returned_fields) {
+      if (is.null(labels)) {
+        message("Got a `sentiment` field back but no `labels` were supplied to validate against for input: ",
+                substr(text_input, 1, 60))
+      } else if (!parsed$sentiment %in% labels) {
+        message("Sentiment outside provided label set for input: ",
+                substr(text_input, 1, 60), " | got: ", parsed$sentiment)
+        parsed$sentiment <- NA_character_
+      }
+    }
+    
+    if ("confidence_score" %in% returned_fields) {
+      if (is.null(parsed$confidence_score) || !is.numeric(parsed$confidence_score)) {
+        parsed$confidence_score <- 0.0
+      } else {
+        parsed$confidence_score <- pmin(pmax(parsed$confidence_score, 0), 1)
+      }
+    }
+    
+    if ("numeric_score" %in% returned_fields) {
+      if (is.null(parsed$numeric_score) || !is.numeric(parsed$numeric_score)) {
+        parsed$numeric_score <- NA_real_
+      } else {
+        parsed$numeric_score <- pmin(pmax(parsed$numeric_score, -1), 1)
+      }
     }
     
     parsed
@@ -90,26 +129,39 @@ score_claude_synch <- function(text_input, model = "claude-sonnet-5", labels = s
     status <- tryCatch(resp_status(e$resp), error = function(e2) NA)
     body_msg <- tryCatch(resp_body_json(e$resp)$error$message, error = function(e2) conditionMessage(e))
     message("HTTP error for input: ", substr(text_input, 1, 60), " | status: ", status, " | ", body_msg)
-    list(sentiment = NA, confidence_score = NA, reasoning = NA_character_)
+    fallback
     
   }, error = function(e) {
     message("Parse/other error for input: ", substr(text_input, 1, 60), " | ", conditionMessage(e))
-    list(sentiment = NA, confidence_score = NA, reasoning = NA_character_)
+    fallback
   })
 }
 
-analyze_text_claude_synch <- function(text_df, text_col, model = "claude-sonnet-5", labels = sentiment_levels) {
+analyze_text_claude_synch <- function(text_df, text_col, model = "claude-sonnet-5", labels = NULL,
+                                      system_prompt = NULL) {
   text_df |>
-    mutate(sentiment_data = map({{ text_col }}, ~score_claude_synch(.x, model = model, labels = labels))) |>
+    mutate(sentiment_data = map({{ text_col }}, 
+                                ~score_claude_synch(.x, model = model, labels = labels, system_prompt = system_prompt))) |>
     unnest_wider(sentiment_data)
 }
 
 ## Cache-aware orchestrator for the synchronous path.
 get_or_run_claude_synch <- function(df, text_col, output_name, model = "claude-sonnet-5",
-                                    labels = sentiment_levels) {
+                                    labels = NULL, system_prompt = NULL) {
   
-  labels_tag <- labels_tag_for(labels)
-  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_", labels_tag, "_synch.rds")
+  labels_tag <- if (is.null(labels)) "nolabels" else labels_tag_for(labels)
+  
+  prompt_for_tag <- if (!is.null(system_prompt)) {
+    system_prompt
+  } else if (!is.null(labels)) {
+    get_sentiment_system_prompt(labels)
+  } else {
+    stop("Must supply `labels` or an explicit `system_prompt`.")
+  }
+  prompt_hash <- as.character(as.hexmode(sum(utf8ToInt(prompt_for_tag))))
+  
+  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_",
+                          labels_tag, "_", prompt_hash, "_synch.rds")
   
   if (file.exists(expected_path)) {
     message("Found existing results at: ", expected_path, " — loading from disk.")
@@ -117,7 +169,8 @@ get_or_run_claude_synch <- function(df, text_col, output_name, model = "claude-s
     
   } else {
     message("No existing results found at: ", expected_path, " — running synchronous scoring.")
-    result <- analyze_text_claude_synch(df, {{ text_col }}, model = model, labels = labels)
+    result <- analyze_text_claude_synch(df, {{ text_col }}, model = model, labels = labels,
+                                        system_prompt = system_prompt)
     
     saveRDS(result, expected_path)
     message("Results saved to: ", expected_path)
@@ -129,8 +182,16 @@ get_or_run_claude_synch <- function(df, text_col, output_name, model = "claude-s
 
 ## ================= BATCH PATH =================
 
-build_batch_requests <- function(df, text_col, id_col, model = "claude-sonnet-5", labels = sentiment_levels) {
-  system_prompt <- get_sentiment_system_prompt(labels)
+build_batch_requests <- function(df, text_col, id_col, model = "claude-sonnet-5", labels = NULL,
+                                 system_prompt = NULL) {
+  
+  if (is.null(system_prompt)) {
+    if (is.null(labels)) {
+      stop("Must supply `labels` (for the default label-driven prompt) ",
+           "or an explicit `system_prompt`.")
+    }
+    system_prompt <- get_sentiment_system_prompt(labels)
+  }
   
   pmap(list(pull(df, {{ id_col }}), pull(df, {{ text_col }})), function(id, txt) {
     list(
@@ -182,10 +243,15 @@ poll_batch <- function(batch_id, poll_interval = 60) {
   }
 }
 
-parse_batch_result_line <- function(line, labels = sentiment_levels) {
+## No longer takes `labels` for validation purposes — validation now
+## happens generically based on which fields actually come back, matching
+## score_claude_synch()'s approach. `labels` still needed here purely to
+## check a returned sentiment against, so kept as an optional arg.
+parse_batch_result_line <- function(line, labels = NULL) {
   parsed <- fromJSON(line, simplifyVector = FALSE)
   custom_id <- parsed$custom_id
-  base <- list(custom_id = custom_id, sentiment = NA, confidence_score = NA, reasoning = NA_character_)
+  base <- list(custom_id = custom_id, sentiment = NA_character_, numeric_score = NA_real_,
+               confidence_score = NA_real_, reasoning = NA_character_)
   
   if (parsed$result$type != "succeeded") {
     message("Batch request failed for ", custom_id, " | type: ", parsed$result$type,
@@ -201,15 +267,21 @@ parse_batch_result_line <- function(line, labels = sentiment_levels) {
       return(base)
     }
     
-    if (!is.null(result$sentiment) && !result$sentiment %in% labels) {
+    returned_fields <- names(result)
+    
+    if ("sentiment" %in% returned_fields && !is.null(labels) && !result$sentiment %in% labels) {
       message("Sentiment outside provided label set for ", custom_id, " | got: ", result$sentiment)
       result$sentiment <- NA_character_
     }
     
-    list(custom_id = custom_id,
-         sentiment = result$sentiment,
-         confidence_score = result$confidence_score,
-         reasoning = result$reasoning)
+    if ("numeric_score" %in% returned_fields && is.numeric(result$numeric_score)) {
+      result$numeric_score <- pmin(pmax(result$numeric_score, -1), 1)
+    }
+    if ("confidence_score" %in% returned_fields && is.numeric(result$confidence_score)) {
+      result$confidence_score <- pmin(pmax(result$confidence_score, 0), 1)
+    }
+    
+    c(list(custom_id = custom_id), result[returned_fields])
     
   }, error = function(e) {
     message("Parse error for ", custom_id, " | ", conditionMessage(e))
@@ -217,7 +289,7 @@ parse_batch_result_line <- function(line, labels = sentiment_levels) {
   })
 }
 
-fetch_batch_results <- function(results_url, labels = sentiment_levels) {
+fetch_batch_results <- function(results_url, labels = NULL) {
   results_req <- request(results_url) |>
     req_headers("x-api-key" = Sys.getenv("CLAUDE_API_KEY"), "anthropic-version" = "2023-06-01") |>
     req_retry(max_tries = 4, backoff = ~ 2 ^ .x,
@@ -233,8 +305,8 @@ fetch_batch_results <- function(results_url, labels = sentiment_levels) {
 ## get_or_run_claude_batch() so both functions agree on the exact same
 ## cache filename — no risk of the two computing it differently).
 analyze_text_claude_batch <- function(df, text_col, id_col = NULL, output_name,
-                                      model = "claude-sonnet-5", labels = sentiment_levels,
-                                      save_path = NULL) {
+                                      model = "claude-sonnet-5", labels = NULL,
+                                      system_prompt = NULL, save_path = NULL) {
   
   generated_id <- is.null(rlang::enexpr(id_col))
   
@@ -247,7 +319,8 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL, output_name,
     id_is_integer <- is.numeric(pull(df, !!id_col_sym))
   }
   
-  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym, model = model, labels = labels)
+  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym, model = model,
+                                   labels = labels, system_prompt = system_prompt)
   batch_id <- submit_batch(requests)
   
   status <- poll_batch(batch_id)
@@ -261,8 +334,9 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL, output_name,
     arrange(!!id_col_sym)   # explicit sort — never trust join/batch return order
   
   if (is.null(save_path)) {
+    labels_tag <- if (is.null(labels)) "nolabels" else labels_tag_for(labels)
     save_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_",
-                        labels_tag_for(labels), "_batch.rds")
+                        labels_tag, "_batch.rds")
   }
   saveRDS(results_df, save_path)
   message("Batch results saved to: ", save_path)
@@ -280,10 +354,12 @@ analyze_text_claude_batch <- function(df, text_col, id_col = NULL, output_name,
 ## and passes it into analyze_text_claude_batch() as save_path, so the two
 ## functions can never disagree about where results live.
 get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name,
-                                    model = "claude-sonnet-5", labels = sentiment_levels) {
+                                    model = "claude-sonnet-5", labels = NULL,
+                                    system_prompt = NULL) {
   
+  labels_tag <- if (is.null(labels)) "nolabels" else labels_tag_for(labels)
   expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_",
-                          labels_tag_for(labels), "_batch.rds")
+                          labels_tag, "_batch.rds")
   
   generated_id <- is.null(rlang::enexpr(id_col))
   
@@ -306,15 +382,13 @@ get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name,
     message("No existing results found at: ", expected_path, " — running batch.")
     out <- analyze_text_claude_batch(df, {{ text_col }}, !!id_col_sym,
                                      output_name = output_name, model = model,
-                                     labels = labels, save_path = expected_path)
+                                     labels = labels, system_prompt = system_prompt,
+                                     save_path = expected_path)
   }
   
   if (generated_id) out <- out |> select(-.row_id)
   
   out
 }
-
-
-
 
 
