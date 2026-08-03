@@ -1,5 +1,3 @@
-source("00-shared_objects.R")
-
 library(httr2)       # request(), req_headers(), req_body_json(), req_retry(), req_perform()
 library(jsonlite)    # fromJSON()
 library(dplyr)

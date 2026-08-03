@@ -2,6 +2,23 @@ library(dplyr)
 library(rlang)    # %||% used inside extract_json_response()
 
 
+## ================= LABEL SET =================
+sentiment_levels <- c("Joy", "Trust", "Anticipation", "Surprise",
+                      "Anger", "Disgust", "Fear", "Sadness", "Neutral")
+
+sentiment_colors <- c(
+  "Neutral"      = "#adb5bd",
+  "Trust"        = "#2a9d8f",
+  "Anticipation" = "#e9c46a",
+  "Fear"         = "#264653",
+  "Joy"          = "#f4a261",
+  "Anger"        = "#e76f51",
+  "Sadness"      = "#6d6875",
+  "Surprise"     = "#84a59d",
+  "Disgust"      = "#bc6c25"
+)
+
+
 ## ================= SCHEMAS =================
 
 ## 1. Categorical only: sentiment + confidence_score + reasoning
@@ -78,7 +95,8 @@ get_sentiment_system_prompt <- function(labels) {
     "Analyze the emotional tone of the provided text and output a single JSON object matching this exact schema:\n",
     "{\n",
     "  \"sentiment\": string,   // exactly one of: ", labels_enum, "\n",
-    "  \"confidence_score\": number  // 0.0-1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)\n",
+    "  \"confidence_score\": number,  // 0.0-1.0, your certainty that this is the single best-fitting label (not the intensity of the emotion)\n",
+    "  \"reasoning\": string  // one short sentence explaining the judgment\n",
     "}\n",
     "Rules:\n",
     "1. Output ONLY the raw JSON object. No markdown code fences, no backticks, no preamble, no explanation, no trailing text.\n",
@@ -91,12 +109,13 @@ get_sentiment_system_prompt <- function(labels) {
   )
 }
 
+
 categorical_prompt_examples <- r"(
 Examples:
 Input: "The old house creaked, and she felt the walls closing in around her."
-Output: {"sentiment": "Fear", "confidence_score": 0.82}
+Output: {"sentiment": "Fear", "confidence_score": 0.82, "reasoning": "The creaking house and closing walls create a strong sense of dread."}
 Input: "asdkj 12341 !!!"
-Output: {"sentiment": "Neutral", "confidence_score": 0.0}
+Output: {"sentiment": "Neutral", "confidence_score": 0.0, "reasoning": "No interpretable emotional content."}
 )"
 
 ## Fixed default (9-category, with worked examples) — derived, not duplicated.
@@ -188,21 +207,6 @@ get_judge_system_prompt <- function(labels) {
 ## Fixed default (9-category) — derived, not hand-duplicated.
 judge_system_prompt <- get_judge_system_prompt(sentiment_levels)
 
-## ================= LABEL SET =================
-sentiment_levels <- c("Joy", "Trust", "Anticipation", "Surprise",
-                      "Anger", "Disgust", "Fear", "Sadness", "Neutral")
-
-sentiment_colors <- c(
-  "Neutral"      = "#adb5bd",
-  "Trust"        = "#2a9d8f",
-  "Anticipation" = "#e9c46a",
-  "Fear"         = "#264653",
-  "Joy"          = "#f4a261",
-  "Anger"        = "#e76f51",
-  "Sadness"      = "#6d6875",
-  "Surprise"     = "#84a59d",
-  "Disgust"      = "#bc6c25"
-)
 
 ## ================= SHARED PARSING HELPER =================
 extract_json_response <- function(content_blocks) {
@@ -224,6 +228,46 @@ labels_tag_for <- function(labels) {
   
   paste0(length(labels), "cat-", hash_str)
 }
+
+
+
+
+## ================= NUMERIC VALIDATION HELPER =================
+## Guards against malformed numeric values slipping through as
+## plausible-looking data — e.g. a broken scientific-notation literal like
+## `0.75e-1612345678912345` parses as numeric and underflows to ~0, which is
+## indistinguishable from a genuine "the model said zero" answer unless
+## caught here. Used by every scoring path (local, Claude sync, Claude
+## batch) so a parsing glitch is never silently reported as a real result.
+##
+## Returns NA_real_ (not 0) for anything invalid or implausibly extreme —
+## NA preserves "we don't actually know" rather than manufacturing a
+## fake-but-plausible value, and callers should log when this fires.
+safe_numeric <- function(x, min_val, max_val, underflow_floor = 1e-6) {
+  if (is.null(x) || !is.numeric(x) || is.nan(x) || is.infinite(x)) {
+    return(NA_real_)
+  }
+  # Catches near-zero underflow from a malformed exponent, without
+  # rejecting genuine, deliberately-small-but-real values below the floor —
+  # 1e-6 is far smaller than any meaningful confidence/valence distinction
+  # this schema actually needs.
+  if (abs(x) > 0 && abs(x) < underflow_floor) {
+    return(NA_real_)
+  }
+  pmin(pmax(x, min_val), max_val)
+}
+
+exists("safe_numeric")
+safe_numeric(0.75e-1612345678912345, 0, 1)   # should return NA, not 0
+safe_numeric(0.1, 0, 1)                        # should return 0.1, unaffected
+
+
+
+
+
+
+
+
 
 
 

@@ -1,11 +1,29 @@
-source("00-shared_objects.R")
 library(ollamar)
 library(jsonlite)
 library(dplyr)
 library(purrr)
 library(tidyr)
 library(stringr)
+library(rlang)   # %||%
 
+
+# ============================================================================
+# Local LLM (Ollama) Scoring
+# ============================================================================
+# Supports three schema shapes via the shared `labels`/`system_prompt`/
+# `json_schema` pattern used across every scoring path in this project:
+#   1. Categorical only    — pass `labels`, nothing else
+#   2. Categorical+numeric — pass `labels` + system_prompt = sentiment_numeric_system_prompt
+#                             + json_schema = categorical_numeric_json_schema(labels)
+#   3. Numeric only        — pass system_prompt = numeric_only_system_prompt
+#                             + json_schema = numeric_only_json_schema(), no labels
+#
+# All numeric fields (confidence_score, numeric_score) are validated through
+# safe_numeric() (see 00-shared_objects.R), which returns NA — not a fake
+# plausible-looking 0 — for anything malformed, missing, non-numeric, or
+# implausibly close to zero from a broken exponent (e.g.
+# 0.75e-1612345678912345, which underflows to ~0 and would otherwise be
+# indistinguishable from a genuine "the model said zero" answer).
 
 score_local_llm <- function(text_col, model = "llama3.2:latest", labels = NULL,
                             system_prompt = NULL, json_schema = NULL) {
@@ -49,19 +67,21 @@ score_local_llm <- function(text_col, model = "llama3.2:latest", labels = NULL,
     }
     
     if ("confidence_score" %in% expected_fields) {
-      if (is.null(parsed$confidence_score) || !is.numeric(parsed$confidence_score)) {
-        parsed$confidence_score <- 0.0
-      } else {
-        parsed$confidence_score <- pmin(pmax(parsed$confidence_score, 0), 1)
+      cleaned <- safe_numeric(parsed$confidence_score, 0, 1)
+      if (is.na(cleaned)) {
+        message("Invalid/implausible confidence_score for input: ", substr(text_col, 1, 60),
+                " | raw value: ", parsed$confidence_score %||% "NULL")
       }
+      parsed$confidence_score <- cleaned
     }
     
     if ("numeric_score" %in% expected_fields) {
-      if (is.null(parsed$numeric_score) || !is.numeric(parsed$numeric_score)) {
-        parsed$numeric_score <- NA_real_
-      } else {
-        parsed$numeric_score <- pmin(pmax(parsed$numeric_score, -1), 1)  # clamp to [-1, 1]
+      cleaned <- safe_numeric(parsed$numeric_score, -1, 1)
+      if (is.na(cleaned)) {
+        message("Invalid/implausible numeric_score for input: ", substr(text_col, 1, 60),
+                " | raw value: ", parsed$numeric_score %||% "NULL")
       }
+      parsed$numeric_score <- cleaned
     }
     
     if ("reasoning" %in% expected_fields && is.null(parsed$reasoning)) {
@@ -74,9 +94,10 @@ score_local_llm <- function(text_col, model = "llama3.2:latest", labels = NULL,
     message("Local LLM call failed for input: ", substr(text_col, 1, 60),
             " | ", conditionMessage(e))
     
-    # Build a matching NA-filled fallback based on whatever fields were expected
+    # Build a matching NA-filled fallback based on whatever fields were expected.
+    # NA everywhere, including confidence_score — no more silent 0.0 default,
+    # since a real 0.0 and a failed call must stay distinguishable downstream.
     fallback <- setNames(as.list(rep(NA, length(expected_fields))), expected_fields)
-    if ("confidence_score" %in% expected_fields) fallback$confidence_score <- 0.0
     return(fallback)
   })
 }
@@ -135,8 +156,6 @@ get_or_run_local <- function(df, text_col, output_name, model = "llama3.2:latest
     result
   }
 }
-
-
 
 
 

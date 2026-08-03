@@ -1,22 +1,26 @@
-source("00-shared_objects.R")
-
-
-library(reticulate)  # import(), use_python()/use_condaenv() — bridges to the transformers package in Python
+library(reticulate)  # import(), use_python()/use_condaenv() — bridges to Python for local classifiers
 library(dplyr)
 library(purrr)
 library(tidyr)
 library(stringr)     # str_to_title() for label formatting
 
-
 # Hugging Face
-# Two distinct modes, since "Hugging Face" covers two different kinds of
+# Three distinct modes, since "Hugging Face" covers three different kinds of
 # models here:
-#   (a) Fixed-vocabulary classifiers (e.g. cardiffnlp/twitter-roberta-*) —
-#       score_hf_inference() / analyze_text_hf() / get_or_run_hf(). No prompt,
-#       no dynamic labels — the model dictates its own label set.
-#   (b) HF-hosted instruct/chat models — score_hf_llm() / analyze_text_hf_llm()
-#       / get_or_run_hf_llm(). Same dynamic-label mechanism as the local and
-#       Claude LLM paths, via get_sentiment_system_prompt().
+#   (a) Fixed-vocabulary classifiers (e.g. cardiffnlp/twitter-roberta-*), via
+#       the hosted Inference API — score_hf_inference() / analyze_text_hf() /
+#       get_or_run_hf(). No prompt, no dynamic labels — the model dictates
+#       its own label set.
+#   (b) HF-hosted instruct/chat models, via the hosted Inference API — same
+#       dynamic-label mechanism as the local and Claude LLM paths, via
+#       get_sentiment_system_prompt() — score_hf_llm() / analyze_text_hf_llm()
+#       / get_or_run_hf_llm().
+#   (c) Local transformers classifiers, run fully offline via reticulate/
+#       torch — not through hf_client at all. For models not servable on
+#       the hosted API (or that you'd rather run locally) —
+#       setup_hf_local() / score_hf_local() / analyze_text_hf_local() /
+#       get_or_run_hf_local(). Model-agnostic: swap models by calling
+#       setup_hf_local(model = ...) again.
 
 ## ================= SETUP =================
 
@@ -32,7 +36,7 @@ hf_client <- hf_hub$InferenceClient(
   api_key = hf_token
 )
 
-## ================= (a) FIXED-VOCABULARY CLASSIFIERS =================
+## ================= (a) FIXED-VOCABULARY CLASSIFIERS (hosted API) =================
 
 score_hf_inference <- function(text_input,
                                model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest",
@@ -127,7 +131,7 @@ score_hf_llm <- function(text_input, model, labels = sentiment_levels) {
     
     # Reuse the shared extractor by wrapping the plain-text reply in the
     # same content-block shape Claude's API returns.
-    parsed <- extract_sentiment_json(list(list(type = "text", text = content_text)))
+    parsed <- extract_json_response(list(list(type = "text", text = content_text)))
     
     if (is.null(parsed) || is.null(parsed$sentiment) || !parsed$sentiment %in% labels) {
       message("Invalid/missing sentiment label for input: ", substr(text_input, 1, 60))
@@ -174,25 +178,55 @@ get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentime
   }
 }
 
+## ================= (c) LOCAL TRANSFORMERS CLASSIFIERS (via reticulate) =====
+## Runs fully locally via transformers/torch, not through hf_client — for
+## models not servable on HF's hosted Inference API (or that you'd rather
+## run locally). Has its own fragile, machine-specific conda/reticulate
+## setup, so it's NOT run automatically on source() — call setup_hf_local()
+## explicitly, with whichever model you want, before scoring. This keeps
+## source()-ing this whole file safe even if conda isn't configured, since
+## paths (a) and (b) above don't depend on it at all.
+##
+## Assumes the loaded model returns a single top label + score via a
+## standard `text-classification` pipeline — true for most HF classification
+## models regardless of their specific label set.
 
-# Hugging Face
-py_config() 
+## Tracks which model is currently loaded, so score_hf_local()/get_or_run_hf_local()
+## can warn if you're scoring against a different model than you think you are.
+.hf_local_model_name <- NULL
 
-options(reticulate.conda_binary = "C:/Users/Mardan/miniconda3/condabin/conda.bat")
-conda_binary()   # should now return the path instead of erroring
-use_condaenv("r-reticulate", required = TRUE)
+setup_hf_local <- function(model = "j-hartmann/emotion-english-distilroberta-base",
+                           conda_binary_path = "C:/Users/Mardan/miniconda3/condabin/conda.bat",
+                           conda_env = "r-reticulate") {
+  
+  options(reticulate.conda_binary = conda_binary_path)
+  reticulate::conda_binary()
+  reticulate::use_condaenv(conda_env, required = TRUE)
+  
+  transformers <<- reticulate::import("transformers")
+  
+  hf_local_classifier <<- transformers$pipeline(
+    "text-classification",
+    model = model
+  )
+  
+  .hf_local_model_name <<- model
+  message("Local transformers model loaded: ", model)
+}
 
-
-transformers <- import("transformers")
-
-emotion_classifier <- transformers$pipeline(
-  "text-classification",
-  model = "j-hartmann/emotion-english-distilroberta-base"
-)
-
-score_hartmann_local <- function(text_input) {
+score_hf_local <- function(text_input, model = NULL) {
+  
+  if (!exists("hf_local_classifier")) {
+    stop("No local transformers model loaded — call setup_hf_local(model = ...) first.")
+  }
+  
+  if (!is.null(model) && !identical(model, .hf_local_model_name)) {
+    stop("Requested model '", model, "' does not match the currently loaded model '",
+         .hf_local_model_name, "'. Call setup_hf_local(model = '", model, "') to switch.")
+  }
+  
   tryCatch({
-    res <- emotion_classifier(text_input)
+    res <- hf_local_classifier(text_input)
     list(sentiment = str_to_title(res[[1]]$label),
          confidence_score = as.numeric(res[[1]]$score))
   }, error = function(e) {
@@ -201,64 +235,42 @@ score_hartmann_local <- function(text_input) {
   })
 }
 
-analyze_text_hartmann <- function(df, text_col) {
+analyze_text_hf_local <- function(df, text_col, model = NULL) {
   df |>
-    mutate(sentiment_data = map({{ text_col }}, ~score_hartmann_local(.x))) |> 
+    mutate(sentiment_data = map({{ text_col }}, ~score_hf_local(.x, model = model))) |> 
     unnest_wider(sentiment_data)
 }
 
-get_or_run_hartmann <- function(df, text_col, output_name) {
-  expected_path <- paste0(output_name, "_hartmann-distilroberta.rds")
+## Cache-aware orchestrator. model_tag is derived from whichever model is
+## actually loaded (.hf_local_model_name), not from a hardcoded string —
+## so switching models via setup_hf_local() automatically produces a
+## distinct cache file, the same way get_or_run_local()/get_or_run_claude_synch()
+## key on `model`.
+get_or_run_hf_local <- function(df, text_col, output_name, model = NULL) {
+  
+  if (!exists(".hf_local_model_name") || is.null(.hf_local_model_name)) {
+    stop("No local transformers model loaded — call setup_hf_local(model = ...) first.")
+  }
+  
+  if (!is.null(model) && !identical(model, .hf_local_model_name)) {
+    stop("Requested model '", model, "' does not match the currently loaded model '",
+         .hf_local_model_name, "'. Call setup_hf_local(model = '", model, "') to switch.")
+  }
+  
+  model_tag <- str_replace_all(.hf_local_model_name, "[:/]", "-")
+  expected_path <- paste0(output_name, "_", model_tag, ".rds")
   
   if (file.exists(expected_path)) {
     message("Found existing results at: ", expected_path, " — loading from disk.")
     readRDS(expected_path)
   } else {
     message("No existing results found at: ", expected_path, " — running scoring.")
-    result <- analyze_text_hartmann(df, {{ text_col }})
+    result <- analyze_text_hf_local(df, {{ text_col }}, model = model)
     saveRDS(result, expected_path)
     message("Results saved to: ", expected_path)
     result
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ============================================================================
-# Wrapper functions reference
-# ============================================================================
-# Analysis functions (return a scored df directly, no caching):
-# 1. analyze_text_local(df, text_col, model = "llama3.2:latest", labels = sentiment_levels)
-# 2. analyze_text_claude_synch(text_df, text_col, model = "claude-sonnet-5", labels = sentiment_levels)
-# 3. analyze_text_claude_batch(df, text_col, id_col = NULL, output_name, model = "claude-sonnet-5", labels = sentiment_levels)
-# 4. analyze_text_hf(df, text_col, model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest")
-# 5. analyze_text_hf_llm(df, text_col, model, labels = sentiment_levels)
-#
-# Cache-aware orchestrators (use these day to day):
-# 1. get_or_run_local(df, text_col, output_name, model = "llama3.2:latest", labels = sentiment_levels)
-# 2. get_or_run_claude_synch(df, text_col, output_name, model = "claude-sonnet-5", labels = sentiment_levels)
-# 3. get_or_run_claude_batch(df, text_col, id_col = NULL, output_name, model = "claude-sonnet-5", labels = sentiment_levels)
-# 4. get_or_run_hf(df, text_col, output_name, model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest")
-# 5. get_or_run_hf_llm(df, text_col, output_name, model, labels = sentiment_levels)
-#
-# Dynamic label workflow (align a local/Claude/HF-LLM to a HF classifier's vocab):
-#   target_labels <- get_model_labels("Aniemore/rubert-base-emotion-russian-cedr-m7")
-#   get_or_run_local(df, text, output_name = "changes_kino", labels = target_labels)
-#   get_or_run_claude_synch(df, text, output_name = "changes_kino", labels = target_labels)
-
 
 
 

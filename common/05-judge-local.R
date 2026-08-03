@@ -1,4 +1,3 @@
-source("00-shared_objects.R")
 library(ollamar)
 library(jsonlite)
 library(dplyr)
