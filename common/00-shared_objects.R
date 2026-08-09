@@ -262,11 +262,19 @@ safe_numeric(0.75e-1612345678912345, 0, 1)   # should return NA, not 0
 safe_numeric(0.1, 0, 1)                        # should return 0.1, unaffected
 
 
+# Function to get the emotion labels of the model
 
-
-
-
-
+get_model_labels <- function(model, to_title_case = TRUE) {
+  transformers <- reticulate::import("transformers")
+  config <- transformers$AutoConfig$from_pretrained(model)
+  labels <- unlist(config$id2label, use.names = FALSE)
+  
+  if (to_title_case) {
+    labels <- str_to_title(labels)
+  }
+  
+  labels
+}
 
 
 
