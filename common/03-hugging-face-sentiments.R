@@ -14,7 +14,14 @@ library(stringr)     # str_to_title() for label formatting
 #   (b) HF-hosted instruct/chat models, via the hosted Inference API — same
 #       dynamic-label mechanism as the local and Claude LLM paths, via
 #       get_sentiment_system_prompt() — score_hf_llm() / analyze_text_hf_llm()
-#       / get_or_run_hf_llm().
+#       / get_or_run_hf_llm(). Requires a `client` pointed at a provider that
+#       actually serves chat models — hf-inference itself mostly serves
+#       classification/embeddings/NER, not chat, so a separate client
+#       (hf_client_chat, provider = "featherless-ai") is used by default
+#       for this mode. Verify any new model's actual provider via
+#       huggingface_hub::model_info(model, expand = "inferenceProviderMapping")
+#       before assuming it works on a given provider — provider support
+#       shifts over time and per-model.
 #   (c) Local transformers classifiers, run fully offline via reticulate/
 #       torch — not through hf_client at all. For models not servable on
 #       the hosted API (or that you'd rather run locally) —
@@ -31,10 +38,8 @@ if (hf_token == "") {
   stop("Error: HF_TOKEN not found! Please check your .Renviron file.")
 }
 
-hf_client <- hf_hub$InferenceClient(
-  provider = "hf-inference",
-  api_key = hf_token
-)
+hf_client      <- hf_hub$InferenceClient(provider = "hf-inference",   api_key = hf_token)  # classification models (mode a)
+hf_client_chat <- hf_hub$InferenceClient(provider = "featherless-ai", api_key = hf_token)  # chat/instruct models (mode b)
 
 ## ================= (a) FIXED-VOCABULARY CLASSIFIERS (hosted API) =================
 
@@ -58,15 +63,11 @@ score_hf_inference <- function(text_input,
       # kept for schema parity with the LLM paths
       
     }, error = function(e) {
-      # HF serverless models can return a transient error while "cold starting" —
-      # worth distinguishing that from a genuine failure (or from the model
-      # simply not being deployed on this provider at all — see the model's
-      # Hub page / hf-inference support before assuming it's transient).
       is_loading <- str_detect(conditionMessage(e), regex("503|loading|currently loading", ignore_case = TRUE))
       list(error = TRUE, is_loading = is_loading, message = conditionMessage(e))
     })
     
-    if (is.null(result$error)) return(result)  # success
+    if (is.null(result$error)) return(result)
     
     if (result$is_loading && attempt < max_tries) {
       message("Model loading, retrying (", attempt, "/", max_tries, ") for: ", substr(text_input, 1, 60))
@@ -87,8 +88,6 @@ analyze_text_hf <- function(df, text_col,
     unnest_wider(sentiment_data)
 }
 
-## Cache-aware orchestrator. No labels_tag here — a classifier's label set
-## is fixed to the model itself, so model_tag alone is a sufficient cache key.
 get_or_run_hf <- function(df, text_col, output_name,
                           model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest") {
   
@@ -112,15 +111,20 @@ get_or_run_hf <- function(df, text_col, output_name,
 
 ## ================= (b) HF-HOSTED INSTRUCT/CHAT MODELS (dynamic labels) =====
 
-score_hf_llm <- function(text_input, model, labels = sentiment_levels) {
+score_hf_llm <- function(text_input, model, labels = sentiment_levels, client = hf_client_chat) {
   
   system_prompt <- get_sentiment_system_prompt(labels)
   
+  # Some providers (notably featherless-ai serving Gemma models) reject a
+  # dedicated system role entirely — fold it into the user message instead,
+  # which works universally regardless of whether the model/provider
+  # supports a system role.
+  combined_prompt <- paste0(system_prompt, "\n\n", text_input)
+  
   tryCatch({
-    resp <- hf_client$chat_completion(
+    resp <- client$chat_completion(
       messages = list(
-        list(role = "system", content = system_prompt),
-        list(role = "user", content = text_input)
+        list(role = "user", content = combined_prompt)
       ),
       model = model,
       max_tokens = 200,
@@ -129,8 +133,6 @@ score_hf_llm <- function(text_input, model, labels = sentiment_levels) {
     
     content_text <- resp$choices[[1]]$message$content
     
-    # Reuse the shared extractor by wrapping the plain-text reply in the
-    # same content-block shape Claude's API returns.
     parsed <- extract_json_response(list(list(type = "text", text = content_text)))
     
     if (is.null(parsed) || is.null(parsed$sentiment) || !parsed$sentiment %in% labels) {
@@ -148,16 +150,8 @@ score_hf_llm <- function(text_input, model, labels = sentiment_levels) {
   })
 }
 
-analyze_text_hf_llm <- function(df, text_col, model, labels = sentiment_levels) {
-  df |>
-    mutate(sentiment_data = map({{ text_col }}, ~score_hf_llm(.x, model = model, labels = labels))) |>
-    unnest_wider(sentiment_data)
-}
 
-## Cache-aware orchestrator — labels_tag included, same reasoning as the
-## local/Claude paths: this model's prompt (and therefore its output) depends
-## on which label set it was constrained to.
-get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentiment_levels) {
+get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentiment_levels, client = hf_client_chat) {
   
   model_tag  <- str_replace_all(model, "[:/]", "-")
   labels_tag <- labels_tag_for(labels)
@@ -169,7 +163,7 @@ get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentime
     
   } else {
     message("No existing results found at: ", expected_path, " — running HF LLM scoring.")
-    result <- analyze_text_hf_llm(df, {{ text_col }}, model = model, labels = labels)
+    result <- analyze_text_hf_llm(df, {{ text_col }}, model = model, labels = labels, client = client)
     
     saveRDS(result, expected_path)
     message("Results saved to: ", expected_path)
@@ -179,28 +173,12 @@ get_or_run_hf_llm <- function(df, text_col, output_name, model, labels = sentime
 }
 
 ## ================= (c) LOCAL TRANSFORMERS CLASSIFIERS (via reticulate) =====
-## Runs fully locally via transformers/torch, not through hf_client — for
-## models not servable on HF's hosted Inference API (or that you'd rather
-## run locally). Has its own fragile, machine-specific conda/reticulate
-## setup, so it's NOT run automatically on source() — call setup_hf_local()
-## explicitly, with whichever model you want, before scoring. This keeps
-## source()-ing this whole file safe even if conda isn't configured, since
-## paths (a) and (b) above don't depend on it at all.
-##
-## Assumes the loaded model returns a single top label + score via a
-## standard `text-classification` pipeline — true for most HF classification
-## models regardless of their specific label set.
 
-## Tracks which model is currently loaded, so score_hf_local()/get_or_run_hf_local()
-## can warn if you're scoring against a different model than you think you are.
 .hf_local_model_name <- NULL
 
 setup_hf_local <- function(model = "j-hartmann/emotion-english-distilroberta-base",
-                           conda_binary_path = "C:/Users/Mardan/miniconda3/condabin/conda.bat",
                            conda_env = "r-reticulate") {
   
-  options(reticulate.conda_binary = conda_binary_path)
-  reticulate::conda_binary()
   reticulate::use_condaenv(conda_env, required = TRUE)
   
   transformers <<- reticulate::import("transformers")
@@ -228,10 +206,11 @@ score_hf_local <- function(text_input, model = NULL) {
   tryCatch({
     res <- hf_local_classifier(text_input)
     list(sentiment = str_to_title(res[[1]]$label),
-         confidence_score = as.numeric(res[[1]]$score))
+         confidence_score = as.numeric(res[[1]]$score),
+         reasoning = NA_character_)
   }, error = function(e) {
     message("Failed for: ", substr(text_input, 1, 60), " | ", conditionMessage(e))
-    list(sentiment = NA, confidence_score = NA)
+    list(sentiment = NA, confidence_score = NA, reasoning = NA_character_)
   })
 }
 
@@ -241,11 +220,6 @@ analyze_text_hf_local <- function(df, text_col, model = NULL) {
     unnest_wider(sentiment_data)
 }
 
-## Cache-aware orchestrator. model_tag is derived from whichever model is
-## actually loaded (.hf_local_model_name), not from a hardcoded string —
-## so switching models via setup_hf_local() automatically produces a
-## distinct cache file, the same way get_or_run_local()/get_or_run_claude_synch()
-## key on `model`.
 get_or_run_hf_local <- function(df, text_col, output_name, model = NULL) {
   
   if (!exists(".hf_local_model_name") || is.null(.hf_local_model_name)) {
@@ -271,6 +245,5 @@ get_or_run_hf_local <- function(df, text_col, output_name, model = NULL) {
     result
   }
 }
-
 
 
