@@ -1,13 +1,47 @@
-Hello and welcome to this publication.
-We all like to listen to music, read a short or long story or novel.
-And we all enjoy watching movies.
-We enjoy how artists put the words in lines, lines in verses and create sequences that mesmerize human emotions.
-True art is able to make us feel the artist’s emotional state they were in while creating their masterpieces.
-The feelings behind those words and lines have always been interesting for me.
-I believe we can discover new things in true art no matter how many times we have read or listened to it.
-So, in this publication I will try to represent popular texts in plots.
-I will use R and Python and other related technology in order to analyze text data.
-Of course, machines can not understand the text as fully as humans do.
-But I think these analyses might be complementary to what we understand.
+# The Narratives in Graphs 📊✍️
 
-Read all episodes [Substack](https://thenarrativesingraphs.substack.com/)
+> *"True art is able to make us feel the artist’s emotional state they were in while creating their masterpieces."*
+
+Welcome to **The Narratives in Graphs**—a data science and AI engineering publication exploring the emotional architecture of stories, songs, and classic literature. 
+
+## 🌟 About the Project
+
+We all love listening to music, reading short stories or novels, and watching films. We enjoy how artists arrange words into lines and verses to mesmerize human emotions. The feelings behind those words have always been fascinating. True art reveals new layers no matter how many times we revisit it. 
+
+In this publication, popular and classic texts are represented through data visualizations. While machines cannot fully replicate human literary comprehension, computational text analysis serves as a powerful complementary lens to uncover hidden structural and emotional patterns.
+
+---
+
+## 🛠️ Tech Stack & Architecture
+
+This project bridges statistical rigor with modern AI workflows, using a hybrid local and cloud architecture:
+* **Languages:** R (`tidyverse`, `tidytext`, `tidymodels`, `glmnet`) & Python (Core Python, LangChain, LangGraph).
+* **AI & LLM Orchestration:** OpenAI API, structured Pydantic outputs, and agentic confidence-routing workflows.
+* **Data Management:** Secure local environment configuration (`.env` / `.Renviron`) and Google Sheets API integration.
+* **Environment:** Positron & VS Code on local hardware (optimized for memory efficiency).
+
+---
+
+## 📂 Repository Structure
+
+The codebase is organized chronologically by episode, combining analytical notebooks, R scripts, and Python pipelines:
+
+* [`episode_11/`](./episode_11) — *Agentic Routing & Structured Outputs (LangGraph + LangChain + OpenAI)*
+* *More episodes coming soon...*
+
+---
+
+## 🔗 Links & Resources
+
+* 📰 **Read all episodes on Substack:** [The Narratives in Graphs](https://substack.com) *(Insert your actual Substack link here)*
+* 🌐 **Related Projects:** Check out my other web application projects like [Randomify](https://randomifyapp.com) and [Scrollar](https://scrollar.tech).
+
+---
+
+## ⚙️ Getting Started & Local Setup
+
+If you want to run or inspect the code locally:
+
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
