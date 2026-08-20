@@ -7,3 +7,4 @@
 .Renviron
 .positai
 HF_TOKEN
+.env
