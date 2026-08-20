@@ -18,23 +18,20 @@ This project bridges statistical rigor with modern AI workflows, using a hybrid 
 * **Languages:** R (`tidyverse`, `tidytext`, `tidymodels`, `glmnet`) & Python (Core Python, LangChain, LangGraph).
 * **AI & LLM Orchestration:** OpenAI API, structured Pydantic outputs, and agentic confidence-routing workflows.
 * **Data Management:** Secure local environment configuration (`.env` / `.Renviron`) and Google Sheets API integration.
-* **Environment:** Positron & VS Code on local hardware (optimized for memory efficiency).
+* **Environment:** RStudio/Positron & VS Code on local hardware (optimized for memory efficiency).
 
 ---
 
 ## 📂 Repository Structure
 
 The codebase is organized chronologically by episode, combining analytical notebooks, R scripts, and Python pipelines:
-
-* [`episode_11/`](./episode_11) — *Agentic Routing & Structured Outputs (LangGraph + LangChain + OpenAI)*
 * *More episodes coming soon...*
 
 ---
 
 ## 🔗 Links & Resources
 
-* 📰 **Read all episodes on Substack:** [The Narratives in Graphs](https://substack.com) *(Insert your actual Substack link here)*
-* 🌐 **Related Projects:** Check out my other web application projects like [Randomify](https://randomifyapp.com) and [Scrollar](https://scrollar.tech).
+* 📰 **Read all episodes on Substack:** [The Narratives in Graphs](https://thenarrativesingraphs.substack.com/)
 
 ---
 
@@ -44,4 +41,4 @@ If you want to run or inspect the code locally:
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+   git clone [https://github.com/mardan-mirzaguliyev/the_narratives_in_graphs](https://github.com/mardan-mirzaguliyev/the_narratives_in_graphs.git)
