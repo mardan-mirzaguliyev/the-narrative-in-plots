@@ -19,34 +19,49 @@ gs4_deauth()
 ## Read Google Sheets file with lyrics
 ## For recreation copy and paste the lyrics into your own Google Sheets file. 
 ## with these columns: section line text
-lyrics_id <- "13dM_5vWQGdAeRI-thE6nbzlZIbvbZ8dw9eCu3MsP9Kk"
+lyrics_id <- Sys.getenv("WHAT_I_VE_DONE_LYRICS_ID")
 lyrics_raw <- read_sheet(lyrics_id)
 
 
 # Tokenize the lyrics
 lyrics_tokens <- lyrics_raw |> 
-  unnest_tokens(word, text)
+  mutate(line_id = row_number()) |> # Create a unique ID for each line
+  unnest_tokens(output = word, input = text, to_lower = TRUE, drop = FALSE)
 
-## Total word count - before comparing against AFINN
+
+# Calculate density per line using the preserved text and line_id
+line_density <- lyrics_tokens |> 
+  group_by(line_id, text) |> 
+  summarise(
+    total_words = n(),
+    content_words = sum(!word %in% stop_words$word),
+    .groups = "drop"
+  ) |> 
+  mutate(
+    density_ratio = round(content_words / total_words, 2)
+  )
+
+# Overall average density
+overall_density <- mean(line_density$density_ratio, na.rm = TRUE)
+overall_density 
+
+## Total word count 
 word_count <- lyrics_tokens |> nrow()
 word_count
 
 ## Download AFINN lexicon
 # AFINN scores words –5 (very negative) to +5 (very positive)
-# Valence = sum(scores) / (n_scored_words * 5), giving –1 to +1
 afinn <- get_sentiments("afinn")
 afinn
 
-## Compare words against afinn 
+# Score words with afinn
 lyrics_scored <- lyrics_tokens |>
   left_join(afinn, by = "word")
 
 
-# tidytext calculations and plots 
-
-## Emotional Valence - tidytext
-valence_summary <- lyrics_scored |> 
-  mutate(value = replace_na(value, 0)) |> 
+# Overall valence
+valence_overall_afinn <- lyrics_scored |> 
+  filter(!is.na(value)) |>          
   summarize(
     n_words = n(),
     raw_sum = sum(value),
@@ -54,9 +69,10 @@ valence_summary <- lyrics_scored |>
     valence = raw_sum / max_possible
   )
 
+valence_overall_afinn
 
-## Valence per line - Emotional Arc (valence per line)
-arc <- lyrics_scored |>
+## Line level Emotional Arc (valence per line)
+arc_afinn <- lyrics_scored |>
   group_by(line, section) |> 
   summarize(
     n_scored = sum(!is.na(value)),
@@ -67,10 +83,11 @@ arc <- lyrics_scored |>
     line_valence = if_else(n_scored > 0, raw_sum / (n_scored * 5), 0), # avoid divide-by-zero
             .groups = "drop") |> 
   arrange(line)
-arc
+arc_afinn
 
-## Emotional Arc (valence per line) Plot
-section_labels <- arc |>
+
+## Line level plot
+section_labels_line <- arc |>
   mutate(
     block = cumsum(section != lag(section, default = first(section)))
   ) |>
@@ -82,9 +99,9 @@ section_labels <- arc |>
   )
 
 y_min <- min(arc$line_valence, na.rm = TRUE) - 0.3
-y_max <- max(section_labels$line_valence, na.rm = TRUE) + 0.3
+y_max <- max(section_labels_line$line_valence, na.rm = TRUE) + 0.3
 
-p1 <- ggplot(arc, aes(x = line, 
+plot_line_level_afinn <- ggplot(arc, aes(x = line, 
                       y = line_valence,
                       color = section,
                       group = 1)) +
@@ -108,7 +125,7 @@ p1 <- ggplot(arc, aes(x = line,
     show.legend = FALSE
   ) +
   geom_label(
-    data = section_labels,
+    data = section_labels_line,
     aes(x = line_no, y = line_valence, label = section, color = section),
     fontface = "bold",
     size = 5,
@@ -119,7 +136,7 @@ p1 <- ggplot(arc, aes(x = line,
                      labels = label_number(accuracy = 0.1)) +
   scale_x_continuous(breaks = seq(1, max(lyrics_scored$line), by = 1)) +
   labs(
-    title = "Emotional Arc - Line-by-line Valence",
+    title = "Emotional Arc: Line-by-line Valence",
     subtitle = "AFINN scores normalized to -1 / +1",
     x = "Line Number",
     y = "Valence"
@@ -137,31 +154,18 @@ p1 <- ggplot(arc, aes(x = line,
     legend.position = "none"
   )
 
-print(p1)
+plot_line_level_afinn
 
 ggsave(
-  filename = "01-emotional-arc.png",
-  plot = p1,
+  filename = "plots/01-plot_line_level_afinn.png",
+  plot = plot_line_level_afinn,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-
-# Overall valence
-valence_overall <- lyrics_scored |> 
-  filter(!is.na(value)) |>          # keep only AFINN-matched words
-  summarize(
-    n_words = n(),
-    raw_sum = sum(value),
-    max_possible = n() * 5,
-    valence = raw_sum / max_possible
-  )
-
-print(valence_overall)
-
-# Valence per section
+# Section level Emotional Arc (valence per section)
 
 ## Method 1: Weights by word count: lines with more scored words 
              ## have more influence
@@ -178,9 +182,7 @@ valence_section <- lyrics_scored |>
   mutate(section = factor(section,
     levels = c("verse1", "chorus",
                 "verse2", "bridge")))
-
-cat("\n-- Valence by Section -----\n")
-print(valence_section)
+valence_section
 
 
 ## Method 2 (SELECTED): Arc-derived valence scores based on valence per lines
@@ -193,15 +195,14 @@ valence_section_from_arc <- arc |>
                                      "verse2", "bridge")))
 
 
-section_labels_for_p2 <- valence_section_from_arc |>
+section_labels <- valence_section_from_arc |>
   group_by(section) |>
   summarize(               
     valence = max(valence) + 0.15, # small offset above the point
     .groups      = "drop"
   )
 
-
-p2 <- ggplot(valence_section_from_arc, aes(x = section, y = valence,
+plot_section_level_afinn <- ggplot(valence_section_from_arc, aes(x = section, y = valence,
                         color = section, group = 1)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
   geom_line(linewidth = 1, show.legend = FALSE) +
@@ -213,7 +214,7 @@ p2 <- ggplot(valence_section_from_arc, aes(x = section, y = valence,
     "bridge" = "#CC79A7"
   )) +
   geom_label(
-    data = section_labels_for_p2,
+    data = section_labels,
     aes(label = round(valence, 2)),
     vjust    = -0.7,      # pushes label above the point
     colour   = "black",
@@ -224,7 +225,7 @@ p2 <- ggplot(valence_section_from_arc, aes(x = section, y = valence,
     show.legend = FALSE
   ) +
   geom_label(
-    data = section_labels_for_p2,
+    data = section_labels,
     aes(x = section, y = valence, label = section, color = section),
     fontface = "bold",
     size = 5,
@@ -249,16 +250,15 @@ p2 <- ggplot(valence_section_from_arc, aes(x = section, y = valence,
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
-print(p2)
+plot_section_level_afinn
 
 ggsave(
-  filename = "02-valence-per-section.png",
-  plot = p2,
+  filename = "plots/02-plot_section_level_afinn.png",
+  plot = plot_section_level_afinn,
   width = 15,
   height = 10,
   dpi = 300
 )
-
 
 
 # Emotion Breakdown via NRC
@@ -274,7 +274,7 @@ emotion_counts <- lyrics_tokens |>
   mutate(pct = n / sum(n) * 100)
 
 
-p3 <- ggplot(emotion_counts, aes(x = reorder(sentiment, pct),
+plot_emotion_breakdown_nrc <- ggplot(emotion_counts, aes(x = reorder(sentiment, pct),
                                  y = pct, fill = sentiment)) +
   geom_col(show.legend = FALSE) +
   coord_flip() +
@@ -306,127 +306,14 @@ p3 <- ggplot(emotion_counts, aes(x = reorder(sentiment, pct),
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
+plot_emotion_breakdown_nrc
 
-print(p3)
 
 ggsave(
-  filename = "03-emotional-breakdown.png",
-  plot = p3,
+  filename = "plots/03-plot_emotion_breakdown_nrc.png",
+  plot =plot_emotion_breakdown_nrc,
   width = 15,
   height = 10,
   dpi = 300
 )
-
-
-# Lyric Density
-## Density = meaningful words per line (after stopword removal)
-lyrics_tokens_content <- lyrics_raw |> 
-  unnest_tokens(word, text) |> 
-  anti_join(stop_words, by = "word") # removes the, a, of, in, etc.
-
-density <- lyrics_raw |> 
-  mutate(total_words = str_count(text)) |> 
-  left_join(
-    lyrics_tokens_content |> 
-      count(line, name = "content_words"),
-    by = "line"
-  ) |> 
-  mutate(content_words = replace_na(content_words, 0),
-         density_ratio = round(content_words / total_words, 2))
-
-overall_density <- mean(density$density_ratio)
-
-
-# Sentiment Signal Table
-# Key phrases with their AFINN word scores
-signal_words <- lyrics_scored |> 
-  filter(!is.na(value)) |> 
-  arrange(value) |> 
-  select(section, word, afinn_score = value) |> 
-  mutate(
-    polarity = case_when(
-      afinn_score > 0 ~ "positive",
-      afinn_score < 0 ~ "negative",
-      TRUE            ~ "neutral" # exactly 0 — rare in AFINN but possible
-    )
-  )
-
-
-
-# Syuzhet Calculations and Plots
-## Get syuzhet lexicon
-
-lyrics_scored_syuzhet <- lyrics_raw |>
-  mutate(syuzhet_score = get_sentiment(text, method = "syuzhet"))
-lyrics_scored_syuzhet
-
-# Normalise to –1 / +1
-# syuzhet scores are unbounded, so we divide by the observed maximum
-# to get a scale anchored between –1 and +1
-max_abs <- max(abs(lyrics_scored_syuzhet$syuzhet_score))
-max_abs
-
-lyrics_scored_syuzhet <- lyrics_scored_syuzhet |>
-  mutate(normalised_score = syuzhet_score / max_abs)
-lyrics_scored_syuzhet
-
-# Overall valence = mean of all normalised line scores
-overall_valence_syuzhet <- mean(lyrics_scored_syuzhet$normalised_score)
-
-cat(sprintf("Overall emotional valence: %+.3f\n", overall_valence_syuzhet))
-
-
-
-p4 <- lyrics_scored_syuzhet |>
-  ggplot(aes(x = line, y = syuzhet_score)) +
-  geom_col(aes(fill = syuzhet_score), show.legend = FALSE) +
-  scale_fill_gradient2(
-    low      = "#bd1515",
-    mid      = "grey90",
-    high     = "#2a9d8f",
-    midpoint = 0
-  ) +
-  geom_label(
-    aes(label = round(syuzhet_score, 2)),
-    vjust    = -0.6,      # pushes label above the point
-    colour   = "black",
-    fontface = "bold",
-    size     = 3.5,
-    fill     = "white",   # label background
-    linewidth = 0.2      # border thickness around label box
-  ) +
-  scale_x_continuous(breaks = seq(1, max(lyrics_scored_syuzhet$line), by = 1)) +
-  labs(
-    title    = "'What I've Done'",
-    subtitle = "Line-by-line emotional trajectory (syuzhet)",
-    x        = "Song Timeline (Line Number)",
-    y        = "Sentiment Score"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title        = element_text(size = 16, face = "bold", hjust = 0.5),
-    plot.subtitle     = element_text(size = 11, hjust = 0.5),
-    axis.text         = element_text(color = "black"),
-    panel.grid.major.y = element_blank(),
-    panel.grid.major.x = element_line(color = "gray30", linewidth = 0.1),
-    panel.grid.minor  = element_blank(),
-    plot.background   = element_rect(fill = "#cbe8f5", color = NA),
-    panel.background  = element_rect(fill = "#cbe8f5", color = NA)
-  )
-
-print(p4)
-
-
-
-ggsave(
-  filename = "04-syuzhet-calculations.png",
-  plot = p4,
-  width = 15,
-  height = 10,
-  dpi = 300
-)
-
-
-
-
 
