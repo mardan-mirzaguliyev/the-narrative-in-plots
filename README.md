@@ -1,1 +1,3 @@
-# the_narratives_in_graphs
+Hello and welcome to this publication. We all like to listen to music, read a short or long story or novel. And we all enjoy watching movies. We enjoy how artists put the words in lines, lines in verses and create sequences that mesmerize human emotions. True art is able to make us feel the artist’s emotional state they were in while creating their masterpieces. The feelings behind those words and lines have always been interesting for me. I believe we can discover new things in true art no matter how many times we have read or listened to it. So, in this publication I will try to represent popular texts in plots. I will use R and Python and other related technology in order to analyze text data. Of course, machines can not understand the text as fully as humans do. But I think these analyses might be complementary to what we understand.
+
+Read all episodes [Substack](https://thenarrativesingraphs.substack.com/)
