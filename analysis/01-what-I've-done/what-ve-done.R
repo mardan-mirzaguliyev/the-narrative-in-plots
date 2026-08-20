@@ -10,6 +10,11 @@ library(scales)         # Axis formatters: label_percent(), label_number()
 library(googlesheets4)  # Reads lyrics dataframe directly from Google Sheets
 library(tidytext)       # Tokenisation pipeline: unnest_tokens + lexicon joins
 library(syuzhet)        # Line-level scoring without tokenisation; better for lyrics
+library(here)
+library(dotenv)
+
+
+load_dot_env(file = here(".env"))
 
 
 # Read Google Sheets file into R 
