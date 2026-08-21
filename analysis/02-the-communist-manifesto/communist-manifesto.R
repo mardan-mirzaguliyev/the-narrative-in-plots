@@ -202,8 +202,8 @@ p1 <- manifesto_tibble_clean |>
   labs(
     title    = "Bourgeoisie is the most frequent word in The Communist Manifesto",
     subtitle = "Two variations merged: 'bourgeoisie' and 'bourgeois'",
-    x        = "Word",
-    y        = "Count"
+    x        = NULL,
+    y        = NULL
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -437,8 +437,8 @@ p2 <- ggplot(arc, aes(x = chapter, y = mean_valence,
     show.legend = FALSE
   ) +
   labs(
-    title = "Emotional Arc - Chapter-by-Chapter Valence",
-    subtitle = "AFINN scores between -5 / +5",
+    title = "Emotional Arc: Chapter-by-Chapter Valence",
+    subtitle = "Normalized AFINN scores between -1 & 1",
     x = NULL,
     y = "Valence"
   ) +
@@ -538,7 +538,7 @@ p3 <- manifesto_tibble_clean |>
     title = "Positive and Negative Proportions of Chapters",
     subtitle = "Bing Scores",
     x = NULL,
-    y = "Proportion"
+    y = NULL
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -597,7 +597,7 @@ p4 <- manifesto_tibble_clean |>
   ) +
   labs(
     title = "Emotion Profile Across Chapters",
-    subtitle = "NRC lexicon — proportion of matched words per emotion",
+    subtitle = "NRC results",
     x = NULL,
     y = NULL,
     fill = "Proportion"
