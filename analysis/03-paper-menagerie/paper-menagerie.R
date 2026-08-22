@@ -1,25 +1,22 @@
 # DATA PREPARATION
 
 # Load necessary packages
-library(tidyverse) # Core data manipulation and visualization (includes ggplot2, dplyr, tidyr, forcats, stringr)
-library(pdftools)  # Extracts text from PDF files page by page
-library(tibble)    # Creates structured data frames (tibbles) — actually loaded within tidyverse but explicit here
-library(tidytext)  # Tokenization and sentiment lexicons (unnest_tokens, get_sentiments)
-library(magick)    # Image processing — circular cropping, masking, and border creation for author portraits
-library(ggimage)   # Renders images (Marx and Engels portraits) inside ggplot2 visualizations
-library(rsvg)      # SVG rendering engine — required by magick for circle_crop() SVG mask operations     
-library(scales)    # Number formatting — percent(), comma() for axis labels and table values
-library(gt)        # Markdown table generation and saving via kable() and gtsave
-library(syuzhet)   # Line-level scoring without tokenisation; better for sentences or paragraphs
-library(patchwork) # Combined plots
-library(ggrepel)   # Plot readability
-library(httr2)     #     
-library(jsonlite)  #  
+library(tidyverse)
+library(pdftools)  
+library(tibble)    
+library(tidytext)  
+library(magick)    
+library(ggimage)   
+library(rsvg)           
+library(scales)    
+library(gt)        
+library(syuzhet)   
+library(patchwork) 
+library(ggrepel)   
+library(httr2)        
+library(jsonlite)  
 
 
-
-
-# DATA PREPARATION
 story_path <- "data/paper-menagerie.pdf"
 story_raw <- pdf_text(story_path)
 
@@ -59,9 +56,9 @@ head(story_tokens, 20)
 tail(story_tokens, 20)
 
 ## Total word count
-story_tokens |> 
+word_count <- story_tokens |> 
   count()
-
+word_count
 
 ## ANALYSIS
 
@@ -163,7 +160,7 @@ plot_most_frequent_words_afinn_with_like <- story_tokens |>
   ggplot(aes(n, word, fill = sentiment)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~sentiment, scales = "free_y") +
-  labs(x = "Contribution to sentiment",
+  labs(x = NULL,
        y = NULL) +
   geom_label(
     aes(label = n),
@@ -202,7 +199,7 @@ plot_most_frequent_words_bing_with_like <- story_tokens |>
   ggplot(aes(n, word, fill = sentiment)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~sentiment, scales = "free_y") +
-  labs(x = "Contribution to sentiment",
+  labs(x = NULL,
        y = NULL) +
   geom_label(
     aes(label = n),
@@ -233,7 +230,7 @@ plot_combined_word_count_with_like <- plot_most_frequent_words_afinn_with_like /
   plot_annotation(
     title    = "Most frequent positive and negative words",
     subtitle = "Two lexicon approaches: AFINN (top) - Bing (down)",
-    caption  = "Data: Paper Menagerie by Ken Liu (2011) | Analysis: tidytext | Visualization: ggplot2",
+    caption  = "Data: Paper Menagerie by Ken Liu (2011)",
     theme    = theme(
       plot.title    = element_text(size = 20, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(size = 14, hjust = 0.5),
@@ -276,7 +273,7 @@ plot_most_frequent_words_afinn_without_like <- story_tokens |>
   ggplot(aes(n, word, fill = sentiment)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~sentiment, scales = "free_y") +
-  labs(x = "Contribution to sentiment",
+  labs(x = NULL,
        y = NULL) +
   geom_label(
     aes(label = n),
@@ -316,7 +313,7 @@ plot_most_frequent_words_bing_without_like <- story_tokens |>
   ggplot(aes(n, word, fill = sentiment)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~sentiment, scales = "free_y") +
-  labs(x = "Contribution to sentiment",
+  labs(x = NULL,
        y = NULL) +
   geom_label(
     aes(label = n),
@@ -347,7 +344,7 @@ plot_combined_word_count_without_like <- plot_most_frequent_words_afinn_without_
   plot_annotation(
     title    = "Most frequent positive and negative words",
     subtitle = "Two lexicon approaches: AFINN (top) - Bing (down) ('like' removed) ",
-    caption  = "Data: Paper Menagerie by Ken Liu (2011) | Analysis: tidytext | Visualization: ggplot2",
+    caption  = "Data: Paper Menagerie by Ken Liu (2011)",
     theme    = theme(
       plot.title    = element_text(size = 20, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(size = 14, hjust = 0.5),
@@ -358,6 +355,7 @@ plot_combined_word_count_without_like <- plot_most_frequent_words_afinn_without_
 
 plot_combined_word_count_without_like
 
+
 ggsave("plots/02-plot_combined_word_count_without_like.png",
        plot   = plot_combined_word_count_without_like,
        width  = 12,
@@ -367,7 +365,7 @@ ggsave("plots/02-plot_combined_word_count_without_like.png",
 
 
 ## Emotional arc - AFINN
-plot_emotional_arc_afinn <- story_tokens |> 
+story_afinn <- story_tokens |> 
   left_join(afinn, by = "word") |> 
   group_by(paragraph) |> 
   summarize(
@@ -375,20 +373,25 @@ plot_emotional_arc_afinn <- story_tokens |>
     raw_sum = sum(value, na.rm = TRUE),
     mean_valence = mean(value, na.rm = TRUE),
     # Valence = sum(scores) / (n_scored_words * 5), giving –1 to +1
-    paragraph_valence = ifelse(
+    normalized_score = ifelse(
       n_scored > 0,
       raw_sum / (n_scored * 5),
       0
     ),
     .groups = "drop"
   ) |> 
-  arrange(paragraph) |> 
-  ggplot(aes(x = paragraph, 
-             y = mean_valence,
-             color = mean_valence > 0,
-             group = 1)) +
+  arrange(paragraph)
+
+story_afinn
+
+
+plot_emotional_arc_afinn <- story_afinn |> 
+  ggplot(aes(x = paragraph,
+                          y = normalized_score,
+                          color = normalized_score > 0,
+                          group = 1)) +
   geom_line(linewidth = 1, show.legend = FALSE) +
-  geom_point(aes(color = mean_valence > 0), size = 3, show.legend = FALSE) +
+  geom_point(aes(color = normalized_score > 0), size = 3, show.legend = FALSE) +
   annotate(
     "segment",
     x = 1,
@@ -406,7 +409,7 @@ plot_emotional_arc_afinn <- story_tokens |>
     limits = c(1, 14)
   ) +
   geom_label(
-    aes(label = round(mean_valence, 2),
+    aes(label = round(normalized_score, 2),
         hjust = ifelse(paragraph == 13, 1.5, -0.5)),
     vjust    = -0.2,      # pushes label above the point
     colour   = "black",
@@ -417,10 +420,11 @@ plot_emotional_arc_afinn <- story_tokens |>
     show.legend = FALSE
   ) +
   labs(
-    title = "Emotional Arc - Paragraph Valence",
-    subtitle = "AFINN scores between -5 / +5",
+    title = "Paragraph Level Emotional Valence",
+    subtitle = "Normalized AFINN scores between -1 / +1",
+    caption  = "Data: Paper Menagerie by Ken Liu (2011)",
     x = NULL,
-    y = "Valence"
+    y = NULL
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -435,6 +439,9 @@ plot_emotional_arc_afinn <- story_tokens |>
     legend.position = "none"
   )
 
+plot_emotional_arc_afinn
+
+
 ggsave(
   filename = "plots/03-plot_emotional_arc_afinn.png",
   plot = plot_emotional_arc_afinn,
@@ -445,7 +452,7 @@ ggsave(
 
 
 ## Emotional proportions - Bing
-### Bing
+
 ### Build positive and negative labels
 bing_neg <-  story_tokens |>
   left_join(bing, by = "word") |>
@@ -521,8 +528,9 @@ plot_emotional_proportions_bing <- story_tokens |>
   labs(
     title = "Positive and Negative Proportions of Paragraphs",
     subtitle = "Bing Scores",
+    caption  = "Data: Paper Menagerie by Ken Liu (2011)",
     x = NULL,
-    y = "Proportion"
+    y = NULL
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -538,6 +546,7 @@ plot_emotional_proportions_bing <- story_tokens |>
   )
 
 plot_emotional_proportions_bing
+
 
 ggsave(
   filename = "plots/04-plot_emotional_proportions_bing.png",
@@ -602,7 +611,8 @@ plot_nrc_emotional_proportions <- story_tokens |>
   ) +
   labs(
     title = "Emotion Profile Across Paragraphs",
-    subtitle = "NRC lexicon — proportion of matched words per emotion",
+    subtitle = "NRC lexicon: proportion of matched words per emotion",
+    caption  = "Data: Paper Menagerie by Ken Liu (2011)",
     x = NULL,
     y = NULL,
     fill = "Proportion"
@@ -686,10 +696,11 @@ plot_syuzhet_story_scored <- story_scored_syuzhet |>
     max(story_scored_syuzhet$normalized_score) + 0.2
   )) +
   labs(
-    title    = "'Paper Menagerie — Emotional Arc'",
+    title    = "Paragraph 6 is the most positive of the story",
     subtitle = "Paragraph-by-paragraph emotional trajectory (syuzhet)",
-    x        = "Paragraph",
-    y        = "Sentiment Score"
+    caption = "Ken Liu, Paper Menagerie (2011)",
+    x = NULL,
+    y = NULL
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -704,6 +715,7 @@ plot_syuzhet_story_scored <- story_scored_syuzhet |>
   )
 
 plot_syuzhet_story_scored
+
 
 ggsave(
   filename = "plots/06-plot_syuzhet_story_scored.png",
@@ -879,11 +891,11 @@ plot_syuzhet_sentence <- story_scored_syuzhet_sentence |>
         labels = c("1.0", "-0.5", "Neutral", "0.5", "1.5")
       ) +
       labs(
-        title = "Paper Menagerie — Sentence-Level Emotional Arc",
+        title = "Sentence-Level Emotional Arc",
         subtitle = "Syuzhet scores normalized to -1/+1 · Labelled sentences are emotional extremes",
+        caption = "Ken Liu, Paper Menagerie (2011)",
         x = "Sentence",
         y = "Normalized Sentiment Score",
-        caption = "Ken Liu, Paper Menagerie (2011)"
       ) +
       theme_minimal(base_size = 14) +
       theme(
@@ -898,6 +910,7 @@ plot_syuzhet_sentence <- story_scored_syuzhet_sentence |>
       )
       
 plot_syuzhet_sentence
+
 
 ggsave(
   filename = "plots/07-plot_syuzhet_sentence.png",
