@@ -3,10 +3,10 @@ library(rlang)    # %||% used inside extract_json_response()
 
 
 ## ================= LABEL SET =================
-sentiment_levels <- c("Joy", "Trust", "Anticipation", "Surprise",
+default_sentiment_labels <- c("Joy", "Trust", "Anticipation", "Surprise",
                       "Anger", "Disgust", "Fear", "Sadness", "Neutral")
 
-sentiment_colors <- c(
+default_sentiment_colors <- c(
   "Neutral"      = "#adb5bd",
   "Trust"        = "#2a9d8f",
   "Anticipation" = "#e9c46a",
@@ -81,7 +81,7 @@ judge_json_schema <- function(labels) {
 ## Each prompt has exactly ONE generating function as its source of truth.
 ## "Fixed default" versions (used directly by scripts that don't need a
 ## variable label set) are built by CALLING that function with
-## sentiment_levels, then appending worked examples where applicable —
+## default_sentiment_labels, then appending worked examples where applicable —
 ## never by hand-typing a second, separately-maintained copy of the text.
 
 ## --- 1. Categorical only ---
@@ -119,7 +119,7 @@ Output: {"sentiment": "Neutral", "confidence_score": 0.0, "reasoning": "No inter
 )"
 
 ## Fixed default (9-category, with worked examples) — derived, not duplicated.
-sentiment_system_prompt <- paste0(get_sentiment_system_prompt(sentiment_levels), "\n", categorical_prompt_examples)
+sentiment_system_prompt <- paste0(get_sentiment_system_prompt(default_sentiment_labels), "\n", categorical_prompt_examples)
 
 ## --- 2. Categorical + numeric ---
 
@@ -157,7 +157,7 @@ Output: {"sentiment": "Neutral", "numeric_score": 0.0, "confidence_score": 0.0, 
 )"
 
 ## Fixed default (9-category, with worked examples) — derived, not duplicated.
-sentiment_numeric_system_prompt <- paste0(get_sentiment_numeric_system_prompt(sentiment_levels), "\n", categorical_numeric_prompt_examples)
+sentiment_numeric_system_prompt <- paste0(get_sentiment_numeric_system_prompt(default_sentiment_labels), "\n", categorical_numeric_prompt_examples)
 
 ## --- 3. Numeric only — no labels dependency, so no generic/fixed split needed ---
 
@@ -205,7 +205,7 @@ get_judge_system_prompt <- function(labels) {
 }
 
 ## Fixed default (9-category) — derived, not hand-duplicated.
-judge_system_prompt <- get_judge_system_prompt(sentiment_levels)
+judge_system_prompt <- get_judge_system_prompt(default_sentiment_labels)
 
 
 ## ================= SHARED PARSING HELPER =================
