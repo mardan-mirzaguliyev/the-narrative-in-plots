@@ -180,18 +180,17 @@ get_or_run_claude_synch <- function(df, text_col, output_name, model = "claude-s
 
 ## ================= BATCH PATH =================
 
-build_batch_requests <- function(df, text_col, id_col, model = "claude-sonnet-5", labels = NULL,
+build_batch_requests <- function(df, text_col, id_col_name, model = "claude-sonnet-5", labels = NULL,
                                  system_prompt = NULL) {
   
   if (is.null(system_prompt)) {
-    if (is.null(labels)) {
-      stop("Must supply `labels` (for the default label-driven prompt) ",
-           "or an explicit `system_prompt`.")
-    }
+    if (is.null(labels)) stop("Must supply `labels` (for the default label-driven prompt) or an explicit `system_prompt`.")
     system_prompt <- get_sentiment_system_prompt(labels)
   }
   
-  pmap(list(pull(df, {{ id_col }}), pull(df, {{ text_col }})), function(id, txt) {
+  text_col_name <- rlang::as_name(rlang::ensym(text_col))   # resolve to a string once, same pattern as id_col_name
+  
+  pmap(list(df[[id_col_name]], df[[text_col_name]]), function(id, txt) {
     list(
       custom_id = paste0("row_", id),
       params = list(
@@ -208,6 +207,7 @@ build_batch_requests <- function(df, text_col, id_col, model = "claude-sonnet-5"
     )
   })
 }
+
 
 submit_batch <- function(requests) {
   req <- request("https://api.anthropic.com/v1/messages/batches") |>
@@ -241,10 +241,6 @@ poll_batch <- function(batch_id, poll_interval = 60) {
   }
 }
 
-## No longer takes `labels` for validation purposes — validation now
-## happens generically based on which fields actually come back, matching
-## score_claude_synch()'s approach. `labels` still needed here purely to
-## check a returned sentiment against, so kept as an optional arg.
 parse_batch_result_line <- function(line, labels = NULL) {
   parsed <- fromJSON(line, simplifyVector = FALSE)
   custom_id <- parsed$custom_id
@@ -299,73 +295,54 @@ fetch_batch_results <- function(results_url, labels = NULL) {
   map(raw_lines, parse_batch_result_line, labels = labels)
 }
 
-## Runs a batch job and saves results to `save_path` if given (used by
-## get_or_run_claude_batch() so both functions agree on the exact same
-## cache filename — no risk of the two computing it differently).
-analyze_text_claude_batch <- function(df, text_col, id_col = NULL, output_name,
+
+analyze_text_claude_batch <- function(df, text_col, id_col_name, output_name,
                                       model = "claude-sonnet-5", labels = NULL,
                                       system_prompt = NULL, save_path = NULL) {
   
-  generated_id <- is.null(rlang::enexpr(id_col))
-  
-  if (generated_id) {
-    df <- df |> mutate(.row_id = row_number())
-    id_col_sym <- rlang::sym(".row_id")
-    id_is_integer <- TRUE
-  } else {
-    id_col_sym <- rlang::ensym(id_col)
-    id_is_integer <- is.numeric(pull(df, !!id_col_sym))
-  }
-  
-  requests <- build_batch_requests(df, {{ text_col }}, !!id_col_sym, model = model,
+  requests <- build_batch_requests(df, {{ text_col }}, id_col_name, model = model,
                                    labels = labels, system_prompt = system_prompt)
   batch_id <- submit_batch(requests)
   
   status <- poll_batch(batch_id)
   results_list <- fetch_batch_results(status$results_url, labels = labels)
   
+  id_is_integer <- is.numeric(df[[id_col_name]])   # <- base R, no .data[[...]]
   extracted_id <- map_chr(results_list, ~ str_remove(.x$custom_id, "^row_"))
   
   results_df <- map_dfr(results_list, as_tibble) |>
-    mutate(!!rlang::as_name(id_col_sym) := if (id_is_integer) as.integer(extracted_id) else extracted_id) |>
+    mutate(!!id_col_name := if (id_is_integer) as.integer(extracted_id) else extracted_id) |>
     select(-custom_id) |>
-    arrange(!!id_col_sym)   # explicit sort — never trust join/batch return order
+    arrange(.data[[id_col_name]])   # arrange() is a real dplyr verb — .data[[...]] is fine here
   
   if (is.null(save_path)) {
     labels_tag <- if (is.null(labels)) "nolabels" else labels_tag_for(labels)
-    save_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_",
-                        labels_tag, "_batch.rds")
+    save_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_", labels_tag, "_batch.rds")
   }
   saveRDS(results_df, save_path)
   message("Batch results saved to: ", save_path)
   
-  out <- df |>
-    left_join(results_df, by = rlang::as_name(id_col_sym)) |>
-    arrange(!!id_col_sym)
-  
-  if (generated_id) out <- out |> select(-.row_id)
-  
-  out
+  df |>
+    left_join(results_df, by = id_col_name) |>
+    arrange(.data[[id_col_name]])
 }
 
-## Cache-aware orchestrator for the batch path. Computes the cache path once
-## and passes it into analyze_text_claude_batch() as save_path, so the two
-## functions can never disagree about where results live.
+
+
 get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name,
                                     model = "claude-sonnet-5", labels = NULL,
                                     system_prompt = NULL) {
   
   labels_tag <- if (is.null(labels)) "nolabels" else labels_tag_for(labels)
-  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_",
-                          labels_tag, "_batch.rds")
+  expected_path <- paste0(output_name, "_", str_remove(model, "^claude-"), "_", labels_tag, "_batch.rds")
   
   generated_id <- is.null(rlang::enexpr(id_col))
   
   if (generated_id) {
     df <- df |> mutate(.row_id = row_number())
-    id_col_sym <- rlang::sym(".row_id")
+    id_col_name <- ".row_id"
   } else {
-    id_col_sym <- rlang::ensym(id_col)
+    id_col_name <- rlang::as_name(rlang::ensym(id_col))
   }
   
   if (file.exists(expected_path)) {
@@ -373,12 +350,12 @@ get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name,
     results_df <- readRDS(expected_path)
     
     out <- df |>
-      left_join(results_df, by = rlang::as_name(id_col_sym)) |>
-      arrange(!!id_col_sym)
+      left_join(results_df, by = id_col_name) |>
+      arrange(.data[[id_col_name]])
     
   } else {
     message("No existing results found at: ", expected_path, " — running batch.")
-    out <- analyze_text_claude_batch(df, {{ text_col }}, !!id_col_sym,
+    out <- analyze_text_claude_batch(df, {{ text_col }}, id_col_name,
                                      output_name = output_name, model = model,
                                      labels = labels, system_prompt = system_prompt,
                                      save_path = expected_path)
@@ -388,5 +365,6 @@ get_or_run_claude_batch <- function(df, text_col, id_col = NULL, output_name,
   
   out
 }
+
 
 
