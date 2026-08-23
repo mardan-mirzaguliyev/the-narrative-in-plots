@@ -1,14 +1,14 @@
-library(dplyr)          # Data manipulation 
-library(tidyr)          # Reshaping: pivot_wider function
-library(ggplot2)        # Data visualization
+library(dplyr)          
+library(tidyr)          
+library(ggplot2)        
 library(forcats)
-library(textdata)       # Downloads and caches AFINN / Bing / NRC lexicons locally
-library(stringr)        # String ops: str_replace_all for contraction expansion
-library(tibble)         # tribble() for readable row-by-row data entry; clean printing
-library(scales)         # Axis formatters: label_percent(), label_number()
-library(googlesheets4)  # Reads lyrics dataframe directly from Google Sheets
-library(tidytext)       # Tokenisation pipeline: unnest_tokens + lexicon joins
-library(syuzhet)        # Line-level scoring without tokenisation; better for lyrics
+library(textdata)       
+library(stringr)        
+library(tibble)         
+library(scales)         
+library(googlesheets4)  
+library(tidytext)       
+library(syuzhet)        
 library(ggrepel)
 library(gt)
 library(reticulate)
@@ -18,18 +18,20 @@ library(jsonlite)
 library(ollamar)
 library(patchwork)
 library(writexl)
+library(here)
+library(dotenv)
 
+
+load_dot_env(file = here(".env"))
 
 # DATA PREPARATION
 
 # Changes, 2Pac syuzhet pipeline
 
-## Read lyrics of song into R 
-## Authenticate Google account that contains lyrics file
 gs4_deauth()
 
 ## Read individual sheets of lyrics
-lyrics_id <- "13dM_5vWQGdAeRI-thE6nbzlZIbvbZ8dw9eCu3MsP9Kk"
+lyrics_id <- Sys.getenv("CHANGES_ID")
 
 
 # Changes, 2Pac
@@ -181,11 +183,15 @@ changes_2pac_syuzhet |>
   gtsave("tables/01-table_chorus_3_scored_lines_syuzhet.png")
 
 
-## 1.2 Local LLMs - Used for both lyrics
+
+## 1.2 Local LLMs
 
 ### llama3.2:latest
 changes_2pac_llama3_2_latest <- changes_2pac_raw |>
-  get_or_run_local(text, output_name = "changes_2pac_local", model = "llama3.2:latest")
+  get_or_run_local(text, 
+                   output_name = "data/changes_2pac_local", 
+                   model = "llama3.2:latest",
+                   labels = default_sentiment_labels)
 
 changes_2pac_llama3_2_latest
 
@@ -241,16 +247,19 @@ ggsave(
 )
 
 
-### phi4:latest
-phi_4_latest = "phi4:latest"
+### phi4-mini:latest
+phi_4_mini_latest = "phi4-mini:latest"
 
-changes_2pac_phi4_latest <- changes_2pac_raw |>
-  get_or_run_local(text, output_name = "changes_2pac_local", model = phi_4_latest)
+changes_2pac_phi4_mini_latest <- changes_2pac_raw |>
+  get_or_run_local(text, 
+                   output_name = "data/changes_2pac_local", 
+                   model = phi_4_mini_latest,
+                   labels = default_sentiment_labels)
 
-changes_2pac_phi4_latest
+changes_2pac_phi4_mini_latest
 
 
-plot_changes_2pac_phi4_latest <- changes_2pac_phi4_mini_latest |> 
+plot_changes_2pac_phi4_mini_latest <- changes_2pac_phi4_mini_latest |> 
   mutate(section = factor(section, levels = section_order_2pac)) |> 
   group_by(section, sentiment) |> 
   summarize(count = n(),
@@ -273,7 +282,7 @@ plot_changes_2pac_phi4_latest <- changes_2pac_phi4_mini_latest |>
     lineheight = 0.8 
   ) +
   labs(title = "Emotional Distribution",
-       subtitle = "Model: phi4:latest",
+       subtitle = "Model: phi4-mini:latest",
        x = NULL,
        y = NULL,
        caption = "Data: Changes, 2Pac lyrics (1998)") +
@@ -289,7 +298,7 @@ plot_changes_2pac_phi4_latest <- changes_2pac_phi4_mini_latest |>
     panel.background  = element_rect(fill = "#cbe8f5", color = NA)
   )
 
-plot_changes_2pac_phi4_latest
+plot_changes_2pac_phi4_mini_latest
 
 
 ggsave(
@@ -302,8 +311,11 @@ ggsave(
 
 
 ## 1.3 Hugging Face
+# cardiffnlp/twitter-roberta-base-sentiment-latest
+
 changes_2pac_roberta <- changes_2pac_raw |> 
-  get_or_run_hf(text, output_name = "changes_2pac")
+  get_or_run_hf(text,
+                output_name = "data/changes_2pac")
 
 changes_2pac_roberta
 
@@ -362,7 +374,12 @@ ggsave(
 
 ## 1.4 Claude API
 changes_2pac_sonnet_5 <- changes_2pac_raw |>
-  get_or_run_claude_batch(text, output_name = "changes_2pac", model = "claude-sonnet-5")
+  get_or_run_claude_batch(text,
+                          output_name = "data/changes_2pac",
+                          id_col = line,
+                          model = "claude-sonnet-5",
+                          labels = default_sentiment_labels)
+changes_2pac_sonnet_5
 
 
 plot_changes_2pac_sonnet_5 <- changes_2pac_sonnet_5 |> 
@@ -415,70 +432,5 @@ ggsave(
   dpi = 300
 )
 
-
-# 
-# ## Scored objects
-# changes_2pac_syuzhet |>
-#   select(-syuzhet_score) |> 
-#   bind_cols(
-#     results_2pac_llama3_2_latest |> 
-#       select(llama3_label = sentiment, llama3_conf = confidence_score),
-#     results_2pac_phi4_mini_latest |> 
-#       select(phi4_label = sentiment, phi4_conf = confidence_score),
-#     results_2pac_final_roberta |> 
-#       select(roberta_label = sentiment, roberta_conf = confidence_score),
-#     results_2pac_claude_sonnet_5 |> 
-#       select(claude_label = sentiment, claude_conf = confidence_score)
-#   ) |>
-#   mutate(normalized_score = percent(normalized_score, accuracy = 0.1)) |> 
-#   gt() |> 
-#   cols_label(
-#     section = "Section",
-#     line = "Line Number",
-#     text = "Line Text",
-#     normalized_score = "Syzhet Score",
-#     llama3_label = "Llama 3 Label",
-#     llama3_conf = "Llama 3 conf",
-#     phi4_label = "Phi 4",
-#     phi4_conf = "Ph 4 Conf",
-#     roberta_label = "Twitter RoBERTa",
-#     roberta_conf = "Twitter RoBERTa conf",
-#     claude_label = "Sonnet 5 Label",
-#     claude_conf = "Sonnet 5 conf"
-#   ) |>
-#   tab_header(
-#     title = "Line by Line ",
-#     subtitle = "Labels differ from model to model"
-#   ) |> 
-#   # Header styling
-#   tab_style(
-#     style = list(cell_fill(color = "#2a9d8f"), cell_text(color = "white", weight = "bold")),
-#     locations = cells_column_labels()
-#   ) |> 
-#   # Base Body Styling (all rows)
-#   tab_style(
-#     style = cell_fill(color = "#cbe8f5"),
-#     locations = cells_body()
-#   ) |>
-#   gtsave("tables/02-scores_2pac_merged.png")
-# 
-# 
-# 
-# # Changes, 2Pac - Combined
-# 
-# changes_2pac_syuzhet |>
-#   select(-syuzhet_score) |> 
-#   bind_cols(
-#     results_2pac_llama3_2_latest |> 
-#       select(llama3_label = sentiment, llama3_conf = confidence_score),
-#     results_2pac_phi4_mini_latest |> 
-#       select(phi4_label = sentiment, phi4_conf = confidence_score),
-#     results_2pac_final_roberta |> 
-#       select(roberta_label = sentiment, roberta_conf = confidence_score),
-#     results_2pac_claude_sonnet_5 |> 
-#       select(claude_label = sentiment, claude_conf = confidence_score)
-#   ) |>
-#   mutate(normalized_score = percent(normalized_score, accuracy = 0.1)) |> 
-#   write_xlsx("tables/changes_2pac.xlsx")
 
 
