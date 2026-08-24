@@ -311,7 +311,7 @@ ggsave(
 
 
 ## 1.3 Hugging Face
-# cardiffnlp/twitter-roberta-base-sentiment-latest
+# cardiffnlp/twitter-roberta-base-emotion-multilabel-latest
 
 changes_2pac_roberta <- changes_2pac_raw |> 
   get_or_run_hf(text,
@@ -324,7 +324,7 @@ plot_changes_2pac_roberta <- changes_2pac_roberta |>
   mutate(section = factor(section, levels = section_order_2pac)) |> 
   group_by(section, sentiment) |> 
   summarize(count = n(),
-            avg_conf = mean(confidence_score, na.rm = TRUE),
+            avg_top_class_prob = mean(top_class_prob, na.rm = TRUE),
             .groups = "drop") |> 
   group_by(section) |>
   mutate(share = count / sum(count)) |> 
@@ -335,7 +335,7 @@ plot_changes_2pac_roberta <- changes_2pac_roberta |>
     aes(label = paste0(
       sentiment, 
       "\nShare: ", round(share * 100, 0), "%",
-      "\nConfidence: ", round(avg_conf, 2), ""
+      "\nTop Class Prob (avg): ", round(avg_top_class_prob, 2), ""
     )), 
     position = position_fill(vjust = 0.5), 
     color = "white", 
@@ -432,5 +432,15 @@ ggsave(
   dpi = 300
 )
 
+
+# Checks for Conclusion
+changes_2pac_syuzhet
+changes_2pac_llama3_2_latest
+changes_2pac_sonnet_5
+changes_2pac_phi4_mini_latest
+changes_2pac_roberta
+
+
+get_model_labels("cardiffnlp/twitter-roberta-base-emotion-multilabel-latest")
 
 
