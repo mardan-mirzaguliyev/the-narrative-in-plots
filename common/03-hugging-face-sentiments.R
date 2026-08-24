@@ -58,9 +58,8 @@ score_hf_inference <- function(text_input,
       )
       
       list(sentiment = str_to_title(res[[1]]$label),
-           confidence_score = as.numeric(res[[1]]$score),
-           reasoning = NA_character_)  # classifiers don't generate rationale —
-      # kept for schema parity with the LLM paths
+           top_class_prob = as.numeric(res[[1]]$score),
+           reasoning = NA_character_)
       
     }, error = function(e) {
       is_loading <- str_detect(conditionMessage(e), regex("503|loading|currently loading", ignore_case = TRUE))
@@ -77,9 +76,10 @@ score_hf_inference <- function(text_input,
     }
     
     message("Failed for input: ", substr(text_input, 1, 60), " | ", result$message)
-    return(list(sentiment = NA, confidence_score = NA, reasoning = NA_character_))
+    return(list(sentiment = NA, top_class_prob = NA, reasoning = NA_character_))   # fixed
   }
 }
+
 
 analyze_text_hf <- function(df, text_col,
                             model = "cardiffnlp/twitter-roberta-base-emotion-multilabel-latest") {
@@ -111,14 +111,10 @@ get_or_run_hf <- function(df, text_col, output_name,
 
 ## ================= (b) HF-HOSTED INSTRUCT/CHAT MODELS (dynamic labels) =====
 
-score_hf_llm <- function(text_input, model, labels = sentiment_levels, client = hf_client_chat) {
+score_hf_llm <- function(text_input, model, labels = default_sentiment_labels, client = hf_client_chat) {
   
   system_prompt <- get_sentiment_system_prompt(labels)
   
-  # Some providers (notably featherless-ai serving Gemma models) reject a
-  # dedicated system role entirely — fold it into the user message instead,
-  # which works universally regardless of whether the model/provider
-  # supports a system role.
   combined_prompt <- paste0(system_prompt, "\n\n", text_input)
   
   tryCatch({
@@ -206,11 +202,11 @@ score_hf_local <- function(text_input, model = NULL) {
   tryCatch({
     res <- hf_local_classifier(text_input)
     list(sentiment = str_to_title(res[[1]]$label),
-         confidence_score = as.numeric(res[[1]]$score),
+         top_class_prob = as.numeric(res[[1]]$score),
          reasoning = NA_character_)
   }, error = function(e) {
     message("Failed for: ", substr(text_input, 1, 60), " | ", conditionMessage(e))
-    list(sentiment = NA, confidence_score = NA, reasoning = NA_character_)
+    list(sentiment = NA, top_class_prob = NA, reasoning = NA_character_)   # fixed
   })
 }
 
@@ -219,6 +215,7 @@ analyze_text_hf_local <- function(df, text_col, model = NULL) {
     mutate(sentiment_data = map({{ text_col }}, ~score_hf_local(.x, model = model))) |> 
     unnest_wider(sentiment_data)
 }
+
 
 get_or_run_hf_local <- function(df, text_col, output_name, model = NULL) {
   
