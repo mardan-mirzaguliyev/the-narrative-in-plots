@@ -3,7 +3,10 @@ library(googlesheets4)
 library(tidytext)
 library(tidyverse)
 library(gt)
+library(here)
+library(dotenv)
 
+load_dot_env(file = here(".env"))
 
 
 # Changes, Kino
@@ -11,7 +14,8 @@ library(gt)
 ## 2.1 Lexicon based sentiments
 gs4_auth()
 
-lyrics_id <- "13dM_5vWQGdAeRI-thE6nbzlZIbvbZ8dw9eCu3MsP9Kk"
+lyrics_id <- Sys.getenv("CHANGES_ID")
+
 changes_kino_raw <- read_sheet(lyrics_id, "Changes Kino")
 
 
@@ -77,10 +81,12 @@ section_order_kino <- c("Куплет 1", "Припев 1",
 
 
 changes_kino_llama3_2_latest <- changes_kino_raw |> 
-  get_or_run_local(text, output_name = "changes_kino_local", model = "llama3.2:latest")
+  get_or_run_local(text, 
+                   output_name = "data/changes_kino", 
+                   model = "llama3.2:latest",
+                   labels = default_sentiment_labels)
 
 changes_kino_llama3_2_latest
-
 
 
 plot_changes_kino_llama3_2_latest <- changes_kino_llama3_2_latest |> 
@@ -139,7 +145,11 @@ phi_4_mini_latest = "phi4-mini:latest"
 
 
 changes_kino_phi4_mini_latest <- changes_kino_raw |>
-  get_or_run_local(text, output_name = "changes_kino_local", model = phi_4_mini_latest)
+  get_or_run_local(text, 
+                   output_name = "data/changes_kino", 
+                   model = phi_4_mini_latest,
+                   labels = default_sentiment_labels)
+
 
 changes_kino_phi4_mini_latest
 
@@ -196,59 +206,10 @@ ggsave(
 
 
 ## 2.3 Hugging Face
-transformers <- import("transformers")
+setup_hf_local(model = "Aniemore/rubert-base-emotion-russian-cedr-m7")
 
-classifier <- transformers$pipeline(
-  "text-classification",
-  model = "Aniemore/rubert-base-emotion-russian-cedr-m7",
-  top_k = NULL
-)
-
-## ---- flatten one result (one line's worth of emotion scores) --------------
-flatten_emotion_result <- function(result_item) {
-  map_dfr(result_item, ~ tibble(label = .x$label, score = .x$score))
-}
-
-## ---- batch runner with caching, mirroring get_or_run_hf() -----------------
-get_or_run_hf_local <- function(data, text_col, output_name,
-                                model = "Aniemore/rubert-base-emotion-russian-cedr-m7") {
-  cache_path <- paste0(output_name, "_", gsub("/", "-", model), "_local.rds")
-  
-  if (file.exists(cache_path)) {
-    return(readRDS(cache_path))
-  }
-  
-  texts <- data[[text_col]]
-  raw_results <- classifier(texts, top_k = NULL)
-  
-  emotion_scores <- map2_dfr(
-    raw_results, seq_along(raw_results),
-    ~ flatten_emotion_result(.x) |> mutate(row_id = .y)
-  )
-  
-  out <- data |>
-    mutate(row_id = row_number()) |>
-    left_join(emotion_scores, by = "row_id") |>
-    select(-row_id)
-  
-  saveRDS(out, cache_path)
-  out
-}
-
-## ---- run it on the actual song ---------------------------------------------
-changes_kino_cedr <- get_or_run_hf_local(
-  changes_kino_raw, text_col = "text", output_name = "changes_kino"
-)
-
-
-changes_kino_cedr <- changes_kino_cedr |> 
-  rename(sentiment = label,
-         confidence_score = score)
-
-changes_kino_cedr <- changes_kino_cedr |>
-  group_by(section, line) |>
-  slice_max(confidence_score, n = 1, with_ties = FALSE) |>
-  ungroup()
+changes_kino_cedr <- changes_kino_raw |> 
+  get_or_run_hf_local(text, output_name = "data/changes_kino")
 
 changes_kino_cedr
 
@@ -257,7 +218,7 @@ plot_changes_kino_cedr <- changes_kino_cedr |>
   mutate(section = factor(section, levels = section_order_kino)) |> 
   group_by(section, sentiment) |> 
   summarize(count = n(),
-            avg_conf = mean(confidence_score, na.rm = TRUE),
+            avg_top_class_prob = mean(top_class_prob, na.rm = TRUE),
             .groups = "drop") |> 
   group_by(section) |>
   mutate(share = count / sum(count)) |> 
@@ -268,7 +229,7 @@ plot_changes_kino_cedr <- changes_kino_cedr |>
     aes(label = paste0(
       sentiment, 
       "\nShare: ", round(share * 100, 0), "%",
-      "\nConfidence: ", round(avg_conf, 2), ""
+      "\nTop Class Prob (avg): ", round(avg_top_class_prob, 2), ""
     )), 
     position = position_fill(vjust = 0.5), 
     color = "white", 
@@ -307,7 +268,13 @@ ggsave(
 
 ## 2.4 Claude API
 changes_kino_sonnet_5 <- changes_kino_raw |>
-  get_or_run_claude_batch(text, output_name = "changes_kino", model = "claude-sonnet-5")
+  get_or_run_claude_batch(text,
+                          id_col = line,
+                          output_name = "data/changes_kino", 
+                          model = "claude-sonnet-5",
+                          labels = default_sentiment_labels)
+
+changes_kino_sonnet_5
 
 
 plot_changes_kino_sonnet_5 <- changes_kino_sonnet_5 |> 
