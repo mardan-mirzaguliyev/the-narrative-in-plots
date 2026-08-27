@@ -54,7 +54,6 @@ beijing_sentences <- beijing_tbl |>
 beijing_sentences
 
 
-
 ### Lexicon Based Analysis=
 nrc <- get_sentiments("nrc")
 
@@ -80,14 +79,7 @@ beijing_nrc <-
 beijing_nrc 
 
 
-sentiment_colors <- c("Neutral" = "#adb5bd",
-                      "Trust" = "#2a9d8f", "Anticipation" = "#e9c46a", 
-                      "Fear" = "#264653", "Joy" = "#f4a261", 
-                      "Anger" = "#e76f51", "Sadness" = "#6d6875", 
-                      "Surprise" = "#84a59d", "Disgust" = "#bc6c25")
-
-
-plot_emotion_profile_nrc <- beijing_nrc |> 
+plot_section_level_nrc <- beijing_nrc |> 
   group_by(section_id, sentiment) |> 
   summarize(n = n(), .groups = "drop") |> 
   group_by(section_id) |> 
@@ -113,7 +105,7 @@ plot_emotion_profile_nrc <- beijing_nrc |>
   ) +
   labs(
     title = "Emotion Profile Across 5 Sections",
-    subtitle = "NRC lexicon — proportion of sentences by dominant emotion",
+    subtitle = "NRC lexicon: proportion of sentences by dominant emotion",
     caption = "Data: Folding Beijing, Hao Jingfang (2015)",
     x = NULL, y = NULL, fill = "Proportion"
   ) +
@@ -130,30 +122,26 @@ plot_emotion_profile_nrc <- beijing_nrc |>
     legend.position = "none"
   )
 
-plot_emotion_profile_nrc
+plot_section_level_nrc
 
 
 ggsave(
-  filename = "plots/01-plot_emotion_profile_nrc.png",
-  plot = plot_emotion_profile_nrc,
+  filename = "plots/01-plot_section_level_nrc.png",
+  plot = plot_section_level_nrc,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-plot_emotional_breakdown_nrc <- beijing_nrc |> 
+plot_story_level_nrc <- beijing_nrc |> 
   group_by(sentiment) |> 
   summarize(n = n()) |> 
   arrange(desc(n)) |> 
   ggplot(aes(n, fct_reorder(sentiment, n))) +
   # Using a distinct palette for clearer visual separation
   geom_col(aes(fill = sentiment), show.legend = FALSE) +
-  scale_fill_manual(values = c("Neutral" = "#adb5bd", "Trust" = "#2a9d8f", 
-                               "Anticipation" = "#e9c46a", "Fear" = "#264653", 
-                               "Joy" = "#f4a261", "Anger" = "#e76f51",
-                               "Sadness" = "#6d6875", "Surprise" = "#84a59d",
-                               "Disgust" = "#bc6c25")) +
+  scale_fill_manual(values = default_sentiment_colors) +
   scale_x_continuous(limits = c(0, 534), breaks = seq(0, 534, 50)) +
   geom_label(aes(label = n),
              hjust = -0.2,
@@ -175,29 +163,30 @@ plot_emotional_breakdown_nrc <- beijing_nrc |>
         plot.background = element_rect(fill = "#cbe8f5", color = NA),
         panel.background = element_rect(fill = "#cbe8f5", color = NA))
 
-plot_emotional_breakdown_nrc
+plot_story_level_nrc
 
 
 ggsave(
-  filename = "plots/02-plot_emotional_breakdown_nrc.png",
-  plot = plot_emotional_breakdown_nrc,
+  filename = "plots/02-plot_story_level_nrc.png",
+  plot = plot_story_level_nrc,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-
 ### LLM based analysis
 ### llama3.2:latest
 beijing_llama3_2 <- beijing_sentences |>
-  get_or_run_local(sentence, output_name = "beijing_local", model = "llama3.2:latest")
+  get_or_run_local(text_col = sentence, 
+                   output_name = "data/01-beijing_local",
+                   model = "llama3.2:latest",
+                   labels = default_sentiment_labels)
 
 beijing_llama3_2
 
 
-
-plot_beijing_llama3_2 <- beijing_llama3_2 |> 
+plot_section_level_llama3_2 <- beijing_llama3_2 |> 
   group_by(section_id, sentiment) |> 
   summarize(n = n(), .groups = "drop") |> 
   group_by(section_id) |> 
@@ -248,32 +237,27 @@ plot_beijing_llama3_2 <- beijing_llama3_2 |>
     legend.position = "none"
   )
 
-plot_beijing_llama3_2 
+plot_section_level_llama3_2
 
 
 ggsave(
-  filename = "plots/03-plot_beijing_llama3_2.png",
-  plot = plot_beijing_llama3_2 ,
+  filename = "plots/03-plot_section_level_llama3_2.png",
+  plot = plot_section_level_llama3_2,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-
-plot_emotional_breakdown_llama3_2 <- beijing_llama3_2 |> 
+plot_story_level_llama3_2 <- beijing_llama3_2 |> 
   group_by(sentiment) |> 
   summarize(n = n()) |> 
   arrange(desc(n)) |> 
   ggplot(aes(n, fct_reorder(sentiment, n))) +
   # Using a distinct palette for clearer visual separation
   geom_col(aes(fill = sentiment), show.legend = FALSE) +
-  scale_fill_manual(values = c("Neutral" = "#adb5bd", "Trust" = "#2a9d8f", 
-                               "Anticipation" = "#e9c46a", "Fear" = "#264653", 
-                               "Joy" = "#f4a261", "Anger" = "#e76f51",
-                               "Sadness" = "#6d6875", "Surprise" = "#84a59d",
-                               "Disgust" = "#bc6c25")) +
-  scale_x_continuous(limits = c(0, 312), breaks = seq(0, 312, 50)) +
+  scale_fill_manual(values = default_sentiment_colors) +
+  scale_x_continuous(limits = c(0, 600), breaks = seq(0, 600, 50)) +
   geom_label(aes(label = n),
              hjust = -0.2,
              colour = "black", 
@@ -281,7 +265,7 @@ plot_emotional_breakdown_llama3_2 <- beijing_llama3_2 |>
              size = 3.5,
              fill = "white",
              linewidth = 0.5) +
-  labs(title = "Neutral Dropped significantly: Fear Leads the Story's Emotional Register",
+  labs(title = "Neutrality still dominates followed by Anger and Sadness",
        subtitle = "Story-level sentiment breakdown using Llama 3",
        caption = "Data: Folding Beijing, Hao Jingfang (2015)",
        x = NULL, y = NULL) +
@@ -294,12 +278,12 @@ plot_emotional_breakdown_llama3_2 <- beijing_llama3_2 |>
         plot.background = element_rect(fill = "#cbe8f5", color = NA),
         panel.background = element_rect(fill = "#cbe8f5", color = NA))
 
-plot_emotional_breakdown_llama3_2
+plot_story_level_llama3_2
 
 
 ggsave(
-  filename = "plots/04-plot_emotional_breakdown_llama3_2.png",
-  plot = plot_emotional_breakdown_llama3_2,
+  filename = "plots/04-plot_story_level_llama3_2.png",
+  plot = plot_story_level_llama3_2,
   width = 15,
   height = 10,
   dpi = 300
@@ -307,21 +291,21 @@ ggsave(
 
 
 ### Claude Sonnet 5
-
-# Batch — full run, explicit output name, saves as "beijing_claude_sonnet-5.rds"
 beijing_sonnet_5 <- beijing_sentences |> 
-  get_or_run_claude_batch(sentence, sentence_id, output_name = "beijing_claude")
-
+  get_or_run_claude_batch(text_col = sentence,
+                          id_col = sentence_id,
+                          output_name = "data/02-beijing-sonnet-5",
+                          model = "claude-sonnet-5",
+                          labels = default_sentiment_labels)
 beijing_sonnet_5
 
-
+# Check for row id mismatches
 beijing_sonnet_5 |> 
   mutate(row_position = row_number()) |> 
   summarize(mismatches = sum(sentence_id != row_position), total = n())
 
 
-
-plot_beijing_sonnet_5 <- beijing_sonnet_5 |> 
+plot_section_level_sonnet_5 <- beijing_sonnet_5 |> 
   group_by(section_id, sentiment) |> 
   summarize(n = n(), .groups = "drop") |> 
   group_by(section_id) |> 
@@ -373,32 +357,27 @@ plot_beijing_sonnet_5 <- beijing_sonnet_5 |>
     legend.position = "none"
   )
 
-plot_beijing_sonnet_5
+plot_section_level_sonnet_5 
 
 
 ggsave(
-  filename = "plots/05-plot_beijing_sonnet_5.png",
-  plot = plot_beijing_sonnet_5,
+  filename = "plots/05-plot_section_level_sonnet_5 .png",
+  plot = plot_section_level_sonnet_5,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-
-plot_emotional_breakdown_sonnet_5 <- beijing_sonnet_5 |> 
+plot_story_level_sonnet_5 <- beijing_sonnet_5 |> 
   group_by(sentiment) |> 
   summarize(n = n()) |> 
   arrange(desc(n)) |> 
   ggplot(aes(n, fct_reorder(sentiment, n))) +
   # Using a distinct palette for clearer visual separation
   geom_col(aes(fill = sentiment), show.legend = FALSE) +
-  scale_fill_manual(values = c("Neutral" = "#adb5bd", "Trust" = "#2a9d8f", 
-                               "Anticipation" = "#e9c46a", "Fear" = "#264653", 
-                               "Joy" = "#f4a261", "Anger" = "#e76f51",
-                               "Sadness" = "#6d6875", "Surprise" = "#84a59d",
-                               "Disgust" = "#bc6c25")) +
-  scale_x_continuous(limits = c(0, 335), breaks = seq(0, 335, 50)) +
+  scale_fill_manual(values = default_sentiment_colors) +
+  scale_x_continuous(limits = c(0, 400), breaks = seq(0, 400, 50)) +
   geom_label(aes(label = n),
              hjust = -0.2,
              colour = "black", 
@@ -406,7 +385,7 @@ plot_emotional_breakdown_sonnet_5 <- beijing_sonnet_5 |>
              size = 3.5,
              fill = "white",
              linewidth = 0.5) +
-  labs(title = "Neutrality rises significantly followed by Anticipation and Fear",
+  labs(title = "Neutrality drops significantly followed by Fear and Anticipation",
        subtitle = "Story-level sentiment breakdown using Claude Sonnet 5",
        caption = "Data: Folding Beijing, Hao Jingfang (2015)",
        x = NULL, y = NULL) +
@@ -419,56 +398,39 @@ plot_emotional_breakdown_sonnet_5 <- beijing_sonnet_5 |>
         plot.background = element_rect(fill = "#cbe8f5", color = NA),
         panel.background = element_rect(fill = "#cbe8f5", color = NA))
 
-plot_emotional_breakdown_sonnet_5 
+plot_story_level_sonnet_5 
 
 
 ggsave(
-  filename = "plots/06-plot_emotional_breakdown_sonnet_5.png",
-  plot = plot_emotional_breakdown_sonnet_5,
+  filename = "plots/06-plot_story_level_sonnet_5.png",
+  plot = plot_story_level_sonnet_5,
   width = 15,
   height = 10,
   dpi = 300
 )
 
 
-
 ## Checks for Conclusion
 
-nrc |> 
-  filter(word == "waste") |> 
-  gt() |> 
-  cols_label(
-    word = "Word",
-    sentiment = "Sentiment"
-  ) |>
-  tab_header(
-    title = "Filtered word: waste",
-    subtitle = "Labeled sentiment: disgust"
-    ) |> 
-  tab_source_note("Data: NRC lexicon") |>
-  tab_style(
-    style = cell_fill(color = "#2a9d8f"),
-    locations = cells_column_labels()
-  ) |> 
-  tab_style(
-    style = cell_text(color = "white", weight = "bold"),
-    locations = cells_column_labels()
-  ) |> 
-  tab_style(
-    style = cell_fill(color = "#cbe8f5"),
-    locations = cells_body()
-  ) |> 
-  cols_align(align = "center", columns = everything()) |> 
-  gtsave("tables/01-waste-in-nrc.png")
+# Surprise finding - Check graphs
+# Anticipation results - check graphs
+plot_section_level_nrc
+plot_section_level_llama3_2
+plot_section_level_sonnet_5
 
 
+# Neutral sentences and their confidence scores
+beijing_nrc |> 
+  filter(sentiment == "Neutral" & sentence_id == 916)
+
+
+beijing_sonnet_5 |> 
+  filter(sentiment == "Neutral", confidence_score < 0.1) |> 
+  select(sentence_id, sentence, confidence_score)
 
 beijing_llama3_2 |> 
-  group_by(sentiment) |> 
-  summarise(min_conf = min(confidence_score),
-            max_conf = max(confidence_score),
-            avg_conf = mean(confidence_score))
-
+  filter(sentiment == "Neutral", confidence_score < 0.1) |> 
+  select(sentence_id, sentence, confidence_score)
 
 
 beijing_sonnet_5 |> 
@@ -477,41 +439,15 @@ beijing_sonnet_5 |>
             max_conf = max(confidence_score),
             avg_conf = mean(confidence_score))
 
-
-
-
-
-beijing_sonnet_5 |> 
-  filter(sentiment == "Neutral", confidence_score < 0.1) |> 
-  select(sentence_id, sentence, confidence_score)
-
-
-
 beijing_llama3_2 |> 
-  filter(sentiment == "Neutral", confidence_score < 0.1) |> 
-  select(sentence_id, sentence, confidence_score)
+  group_by(sentiment) |> 
+  summarise(min_conf = min(confidence_score),
+            max_conf = max(confidence_score),
+            avg_conf = mean(confidence_score))
 
-
-
-beijing_nrc |> 
-  filter(sentence_id == 2)
-
-beijing_sonnet_5 |> 
-  filter(sentence_id == 2)
-
-
-beijing_nrc |> 
-  filter(sentence_id == 916)
-
-beijing_llama3_2 |> 
-  filter(sentence_id == 916)
-
-
-
-
-
-
-
-
+# Story-level sentiment checks
+plot_story_level_nrc
+plot_story_level_llama3_2
+plot_story_level_sonnet_5
 
 
