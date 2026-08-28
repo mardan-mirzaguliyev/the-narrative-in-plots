@@ -8,11 +8,18 @@ library(janitor)
 library(ggalluvial)
 library(ggrepel)
 library(gt)
+library(here)
+library(dotenv)
+
+
+load_dot_env(file = here(".env"))
 
 
 gs4_deauth()
 
-if_id <- "1ojm1BP4nNaV5R2b3-6ryl-R7dia-xVk52UVdz17bH9M"
+## Read individual sheets of lyrics
+if_id <- Sys.getenv("IF_ID")
+
 
 if_raw <- read_sheet(if_id, "If")
 if_raw
@@ -155,13 +162,17 @@ ggsave(
 
 
 # Local model - gemma4:latest
-if (!dir.exists("data")) dir.create("data")
-
 gemma4_latest <- "gemma4:latest"
 
 
-if_gemma4_latest <- if_raw |> 
-  get_or_run_local(Text, output_name = "data/if", model = gemma4_latest)
+if_gemma4_latest <- if_raw |>
+  get_or_run_local(text_col = Text,
+                   output_name = "data/01-if",
+                   model = gemma4_latest,
+                   labels = default_sentiment_labels)
+
+if_gemma4_latest
+
 
 if_gemma4_latest |> filter(is.na(confidence_score))
 
@@ -276,12 +287,18 @@ ggsave(
 )
 
 
+write_xlsx(if_gemma4_latest, "tables/if_gemma4_latest.xlsx")
+
+
 # Claude Sonnet 5 
-
 if_sonnet_5 <- if_raw |> 
-  get_or_run_claude_batch(Text, Line, output_name = "data/if")
+  get_or_run_claude_synch(text_col = Text,
+                          output_name = "data/02-if",
+                          model = "claude-sonnet-5",
+                          labels = default_sentiment_labels)
 
-if_sonnet_5 |> filter(is.na(confidence_score))   # or whatever the confidence column is called before the coercion happened
+if_sonnet_5
+
 
 if_sonnet_5 <- if_sonnet_5 |> 
   mutate(Sentiment = str_to_title(replace_na(sentiment, "neutral"))) |> 
@@ -295,6 +312,8 @@ if_sonnet_5 <- if_sonnet_5 |>
          sonnet5_reasoning = reasoning)
 
 if_sonnet_5
+
+write_xlsx(if_sonnet_5, "tables/if_sonnet_5.xlsx")
 
 
 plot_if_verses_sonnet_5 <- if_sonnet_5 |>
@@ -381,7 +400,6 @@ plot_if_lines_sonnet_5 <- if_sonnet_5 |>
   )
 
 plot_if_lines_sonnet_5
-
 
 
 ggsave(
@@ -483,9 +501,9 @@ ggsave(
 plot_if_alluvial <- if_comparison |> 
   arrange(line) |> 
   mutate(
-    nrc_sentiment     = factor(nrc_sentiment, levels = sentiment_levels),
-    gemma4_sentiment  = factor(gemma4_sentiment, levels = sentiment_levels),
-    sonnet5_sentiment = factor(sonnet5_sentiment, levels = sentiment_levels)
+    nrc_sentiment     = factor(nrc_sentiment, levels = default_sentiment_labels),
+    gemma4_sentiment  = factor(gemma4_sentiment, levels = default_sentiment_labels),
+    sonnet5_sentiment = factor(sonnet5_sentiment, levels = default_sentiment_labels)
   ) |> 
   ggplot(aes(axis1 = nrc_sentiment, axis2 = gemma4_sentiment, axis3 = sonnet5_sentiment)) +
   geom_alluvium(aes(fill = nrc_sentiment), width = 0.25, alpha = 0.85, color = "white", linewidth = 0.2,
@@ -506,7 +524,7 @@ plot_if_alluvial <- if_comparison |>
     max.iter = 20000, force = 1.5
   ) +
   scale_x_discrete(limits = c("NRC", "Gemma 4", "Claude Sonnet 5"), expand = c(0.2, 0.2)) +
-  scale_fill_manual(values = sentiment_colors) +
+  scale_fill_manual(values = default_sentiment_colors) +
   coord_cartesian(clip = "off") +   # critical — stops repel-nudged labels from being cut at panel edges
   labs(
     title = "How Sentiment Labels Shift Across Methods",
@@ -618,8 +636,8 @@ ggsave(
 plot_if_alluvial_gemma4_sonnet5 <- if_comparison |> 
   arrange(line) |> 
   mutate(
-    gemma4_sentiment  = factor(gemma4_sentiment, levels = sentiment_levels),
-    sonnet5_sentiment = factor(sonnet5_sentiment, levels = sentiment_levels),
+    gemma4_sentiment  = factor(gemma4_sentiment, levels = default_sentiment_labels),
+    sonnet5_sentiment = factor(sonnet5_sentiment, levels = default_sentiment_labels),
     agreement = if_else(gemma4_sentiment == sonnet5_sentiment, "Agree", "Disagree")
   ) |> 
   ggplot(aes(axis1 = gemma4_sentiment, axis2 = sonnet5_sentiment)) +
@@ -675,14 +693,59 @@ ggsave(
 )
 
 
+# Checks
+if_comparison |> 
+  filter(line == 28)
 
-# Tables
+# If all men count with you, but none too much;
 
-# Save results as Excel file to upload to Datawrapper
-write_xlsx(if_gemma4_latest, "tables/if_gemma4_latest.xlsx")
-write_xlsx(if_sonnet_5, "tables/if_sonnet_5.xlsx")
+if_nrc
+
+nrc |> 
+  filter(word == "if")
+
+nrc |> 
+  filter(word == "all")
+
+nrc |> 
+  filter(word == "men")
+
+nrc |> 
+  filter(word == "count")
+
+nrc |> 
+  filter(word == "with")
+
+nrc |> 
+  filter(word == "you")
 
 
+nrc |> 
+  filter(word == "but")
+
+
+nrc |> 
+  filter(word == "none")
+
+
+nrc |> 
+  filter(word == "too")
+
+nrc |> 
+  filter(word == "much")
+
+
+if_gemma4_latest |> 
+  filter(line == 28) |> 
+  dplyr::pull(gemma4_reasoning)
+
+if_sonnet_5 |> 
+  filter(line == 28) |> 
+  dplyr::pull(sonnet5_reasoning)
+
+
+
+# Conclusion
 if_agreement |> 
   filter(agreement_level == "2 of 3 agree") |> 
   mutate(
@@ -827,55 +890,7 @@ gemma4_sonnet5_disagreed_lines |>
   dplyr::pull(sonnet5_reasoning)
 
 
-# Checks
-if_comparison |> 
-  filter(line == 28)
 
-# If all men count with you, but none too much;
-
-if_nrc
-
-nrc |> 
-  filter(word == "if")
-
-nrc |> 
-  filter(word == "all")
-
-nrc |> 
-  filter(word == "men")
-
-nrc |> 
-  filter(word == "count")
-
-nrc |> 
-  filter(word == "with")
-
-nrc |> 
-  filter(word == "you")
-
-
-nrc |> 
-  filter(word == "but")
-
-
-nrc |> 
-  filter(word == "none")
-
-
-nrc |> 
-  filter(word == "too")
-
-nrc |> 
-  filter(word == "much")
-
-
-if_gemma4_latest |> 
-  filter(line == 28) |> 
-  dplyr::pull(gemma4_reasoning)
-
-if_sonnet_5 |> 
-  filter(line == 28) |> 
-  dplyr::pull(sonnet5_reasoning)
 
 
 if_agreement |> 
@@ -890,19 +905,10 @@ if_agreement |>
 
 
 
+if_comparison |> 
+  filter(gemma4_sentiment == sonnet5_sentiment)
 
-
-# Reasoning and Judging - For future analysis
-
-## NRC judged by Gemma4
-
-if_nrc_judged_by_gemma4_latest <- if_nrc |> 
-  get_or_run_judge_local(Text, Sentiment, output_name = "data/if_nrc", model = gemma4_latest)
-
-if_nrc_judged_by_gemma4_latest
-
-
-
+if_
 
 
 
