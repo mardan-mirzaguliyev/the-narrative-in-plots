@@ -1,11 +1,17 @@
 library(tidyverse)
 library(googlesheets4)
 library(gt)
+library(here)
+library(dotenv)
+
+
+load_dot_env(file = here(".env"))
 
 
 gs4_auth()
 
-lyrics_id <- "1oLgGhdmRUwd8qIetS2wEgRFqxl0fiEJNstoHFfGQXBw"
+
+lyrics_id <- Sys.getenv("IMPOSSIBLE_DREAM_ID")
 lyrics_raw <- read_sheet(lyrics_id, sheet = "Impossible Dream")
 lyrics_raw
 
@@ -256,8 +262,10 @@ optimism_lines_summary |>
 
 ## Cardiff-constrained, no Neutral option available
 lyrics_sonnet5_cardiff_labels <- lyrics_raw |> 
-  get_or_run_claude_synch(text, output_name = "data/lyrics",
-                   labels = cardiff_labels)
+  get_or_run_claude_synch(text_col = text, 
+                          output_name = "data/lyrics",
+                          model = "claude-sonnet-5",
+                          labels = cardiff_labels)
 
 lyrics_sonnet5_cardiff_labels
 
