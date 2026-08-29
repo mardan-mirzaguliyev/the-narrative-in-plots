@@ -7,11 +7,15 @@ library(ggrepel)
 library(scales)
 library(gt)
 library(ggalluvial)
+library(here)
+library(dotenv)
 
+
+load_dot_env(file = here(".env"))
 
 gs4_deauth()
 
-sonnet_18_id <- "1wYggI5eGENm4xKYk7u68kVsrI9BroYXqKMMA--PxftI"
+sonnet_18_id <- Sys.getenv("SONNET_18_ID")
 
 sonnet_18_raw <- read_sheet(sonnet_18_id, "Sonnet 18, Modern English")
 sonnet_18_raw <- sonnet_18_raw |> 
@@ -156,8 +160,10 @@ extremes_syuzhet
 # Gemma 4
 ## Categorical only — labels required, prompt/schema auto-generated
 sonnet_18_gemma4_cat <- sonnet_18_raw |> 
-  get_or_run_local(text, output_name = "data/sonnet_18", model = "gemma4:latest",
-                   labels = sentiment_levels)
+  get_or_run_local(text_col = text, 
+                   output_name = "data/01-sonnet_18",
+                   model = "gemma4:latest",
+                   labels = default_sentiment_labels)
 
 sonnet_18_gemma4_cat
 
@@ -165,17 +171,21 @@ sonnet_18_gemma4_cat
 ## Categorical + numeric — labels required (schema needs the enum),
 ## explicit prompt/schema supplied
 sonnet_18_gemma4_cat_num <- sonnet_18_raw |> 
-  get_or_run_local(text, output_name = "data/sonnet_18", model = "gemma4:latest",
-                   labels = sentiment_levels,
-                   system_prompt = get_sentiment_numeric_system_prompt(sentiment_levels),
-                   json_schema = categorical_numeric_json_schema(sentiment_levels))
+  get_or_run_local(text_col = text,
+                   output_name = "data/02-sonnet_18",
+                   model = "gemma4:latest",
+                   labels = default_sentiment_labels,
+                   system_prompt = get_sentiment_numeric_system_prompt(default_sentiment_labels),
+                   json_schema = categorical_numeric_json_schema(default_sentiment_labels))
 
 sonnet_18_gemma4_cat_num
 
 
 ## Numeric only — no labels at all, "nolabels" in the filename
 sonnet_18_gemma4_num <- sonnet_18_raw |> 
-  get_or_run_local(text, output_name = "data/sonnet_18", model = "gemma4:latest",
+  get_or_run_local(text_col = text,
+                   output_name = "data/03-sonnet_18",
+                   model = "gemma4:latest",
                    system_prompt = numeric_only_system_prompt,
                    json_schema = numeric_only_json_schema())
 
@@ -240,7 +250,6 @@ line_order_gemma4 <- paste0("Line ", sort(unique(sonnet_18_gemma4_comparison$lin
 plot_gemma4_score_comparison <- plot_data_gemma4 |> 
   ggplot(aes(y = line_label)) +
   geom_vline(xintercept = 0, color = "#264653", linewidth = 0.9) +
-  
   geom_segment(
     data = plot_data_gemma4 |> filter(move_direction != "No meaningful change"),
     aes(x = cat_num_score, xend = only_num_score, yend = line_label,
@@ -248,13 +257,11 @@ plot_gemma4_score_comparison <- plot_data_gemma4 |>
     linewidth = 1.2,   # fixed, matches Sonnet 5's chart
     alpha = 0.85, lineend = "round", show.legend = FALSE
   ) +
-  
   geom_text(
     data = flip_arrows_gemma4,
     aes(x = arrow_x, y = line_label, label = arrow_label, color = move_color),
     size = 5, fontface = "bold", vjust = -1.6, show.legend = FALSE
   ) +
-  
   geom_point(
     data = plot_data_gemma4 |> filter(move_direction != "No meaningful change"),
     aes(x = cat_num_score), color = "#264653", size = 3.5
@@ -265,25 +272,35 @@ plot_gemma4_score_comparison <- plot_data_gemma4 |>
   ) +
   geom_text(
     data = plot_data_gemma4 |> filter(move_direction != "No meaningful change"),
-    aes(x = cat_num_score, label = round(cat_num_score, 2)), 
-    color = "#264653", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = cat_num_score,
+        label = paste("Cat+Num:", round(cat_num_score, 2))), 
+    color = "#264653",
+    size = 3.2, 
+    vjust = -1.3,
+    fontface = "bold"
   ) +
   geom_text(
     data = plot_data_gemma4 |> filter(move_direction != "No meaningful change"),
-    aes(x = only_num_score, label = round(only_num_score, 2)), 
-    color = "#b8860b", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = only_num_score, 
+        label = paste("Only num:", round(only_num_score, 2))), 
+    color = "#b8860b", 
+    size = 3.2, 
+    vjust = 1.7, 
+    fontface = "bold"
   ) +
-  
   geom_point(
     data = plot_data_gemma4 |> filter(move_direction == "No meaningful change"),
     aes(x = cat_num_score), color = "#264653", size = 3.5
   ) +
   geom_text(
     data = plot_data_gemma4 |> filter(move_direction == "No meaningful change"),
-    aes(x = cat_num_score, label = round(cat_num_score, 2)), 
-    color = "#264653", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = cat_num_score, 
+        label = paste("Cat+Num:", round(cat_num_score, 2))), 
+    color = "#264653", 
+    size = 3.2, 
+    vjust = -1.3,
+    fontface = "bold"
   ) +
-  
   geom_point(
     data = tibble(
       x = c(0, 0), 
@@ -294,7 +311,6 @@ plot_gemma4_score_comparison <- plot_data_gemma4 |>
     aes(x = x, y = y, color = legend_color),
     shape = 15, size = 4, na.rm = TRUE
   ) +
-  
   scale_color_identity(
     name = NULL,
     breaks = c("#e76f51", "#2a9d8f"),
@@ -307,7 +323,7 @@ plot_gemma4_score_comparison <- plot_data_gemma4 |>
     title = "Joint vs. Independent Numeric Scoring: Gemma 4",
     subtitle = "4 of 14 lines flip sign (binomial test, p = 0.004); arrow shows whether the score increased or decreased when scored independently vs. with a category attached",
     caption = "Data: Sonnet 18, William Shakespeare (1609)",
-    x = "Numeric Score",
+    x = NULL,
     y = NULL
   ) +
   theme_minimal(base_size = 14) +
@@ -328,8 +344,8 @@ plot_gemma4_score_comparison
 ggsave(
   filename = "plots/02-plot_gemma4_score_comparison.png",
   plot = plot_gemma4_score_comparison,
-  width = 15,
-  height = 10,
+  width = 20,
+  height = 12,
   dpi = 300
 )
 
@@ -406,8 +422,8 @@ sonnet_18_flipped_lines_gemma4 |>
 plot_gemma4_cat_shift_alluvial <- sonnet_18_gemma4_comparison |> 
   arrange(line) |> 
   mutate(
-    only_cat_sentiment = factor(only_cat_sentiment, levels = sentiment_levels),
-    cat_num_sentiment  = factor(cat_num_sentiment, levels = sentiment_levels),
+    only_cat_sentiment = factor(only_cat_sentiment, levels = default_sentiment_labels),
+    cat_num_sentiment  = factor(cat_num_sentiment, levels = default_sentiment_labels),
     sentiment_changed = if_else(
       as.character(only_cat_sentiment) == as.character(cat_num_sentiment),
       "Sentiment not changed",
@@ -432,7 +448,6 @@ plot_gemma4_cat_shift_alluvial <- sonnet_18_gemma4_comparison |>
     min.segment.length = 0, box.padding = 0.15, max.overlaps = Inf,
     max.iter = 20000, force = 1.5
   ) +
-  
   scale_x_discrete(limits = c("Categorical Only", "Categorical + Numeric"), expand = c(0.2, 0.2)) +
   scale_fill_manual(values = c(
     "Sentiment not changed" = "#2a9d8f",
@@ -470,30 +485,32 @@ ggsave(
 )
 
 
-
 # Claude Sonnet 5
+
 ## Categorical only
 sonnet_18_sonnet5_cat <- sonnet_18_raw |> 
-  get_or_run_claude_synch(text, 
-                          output_name = "data/sonnet_18", 
+  get_or_run_claude_synch(text_col = text,
+                          output_name = "data/04-sonnet_18", 
                           model = "claude-sonnet-5",
-                          labels = sentiment_levels)
+                          labels = default_sentiment_labels)
 
 sonnet_18_sonnet5_cat
 
 
 ## Categorical + numeric
 sonnet_18_sonnet5_cat_num <- sonnet_18_raw |> 
-  get_or_run_claude_synch(text, output_name = "data/sonnet_18",
+  get_or_run_claude_synch(text_col = text, 
+                          output_name = "data/05-sonnet_18",
                           model = "claude-sonnet-5",
-                          labels = sentiment_levels, 
+                          labels = default_sentiment_labels, 
                           system_prompt = sentiment_numeric_system_prompt)
 
 sonnet_18_sonnet5_cat_num
 
+
 ## Numeric only — no labels at all
 sonnet_18_sonnet5_num <- sonnet_18_raw |> 
-  get_or_run_claude_synch(text, output_name = "data/sonnet_18",
+  get_or_run_claude_synch(text, output_name = "data/06-sonnet_18",
                           system_prompt = numeric_only_system_prompt)
 
 sonnet_18_sonnet5_num
@@ -552,7 +569,6 @@ line_order_sonnet5 <- paste0("Line ", sort(unique(sonnet_18_sonnet5_comparison$l
 plot_sonnet5_score_comparison <- plot_data_sonnet5 |> 
   ggplot(aes(y = line_label)) +
   geom_vline(xintercept = 0, color = "#264653", linewidth = 0.9) +
-  
   geom_segment(
     data = plot_data_sonnet5 |> filter(move_direction != "No meaningful change"),
     aes(x = cat_num_score, xend = only_num_score, yend = line_label,
@@ -562,39 +578,59 @@ plot_sonnet5_score_comparison <- plot_data_sonnet5 |>
   ) +
   geom_text(
     data = move_arrows_sonnet5,
-    aes(x = arrow_x, y = line_label, label = arrow_label, color = move_color),
-    size = 5, fontface = "bold", vjust = -1.6, show.legend = FALSE
+    aes(x = arrow_x, 
+        y = line_label, 
+        label = arrow_label, 
+        color = move_color),
+    size = 5,
+    fontface = "bold",
+    vjust = -1.6, show.legend = FALSE
   ) +
-  
   geom_point(
-    data = plot_data_sonnet5 |> filter(move_direction != "No meaningful change"),
-    aes(x = cat_num_score), color = "#264653", size = 3.5
+    data = plot_data_sonnet5 |> 
+      filter(move_direction != "No meaningful change"),
+    aes(x = cat_num_score),
+    color = "#264653",
+    size = 3.5
   ) +
   geom_point(
-    data = plot_data_sonnet5 |> filter(move_direction != "No meaningful change"),
-    aes(x = only_num_score), color = "#e9c46a", size = 3.5
+    data = plot_data_sonnet5 |> 
+      filter(move_direction != "No meaningful change"),
+    aes(x = only_num_score), 
+    color = "#e9c46a",
+    size = 3.5
   ) +
   geom_text(
     data = plot_data_sonnet5 |> filter(move_direction != "No meaningful change"),
-    aes(x = cat_num_score, label = round(cat_num_score, 2)), 
-    color = "#264653", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = cat_num_score, 
+        label = paste("Cat+Num:", round(cat_num_score, 2))), 
+    color = "#264653",
+    size = 3.2, 
+    vjust = -1.3, 
+    fontface = "bold"
   ) +
   geom_text(
     data = plot_data_sonnet5 |> filter(move_direction != "No meaningful change"),
-    aes(x = only_num_score, label = round(only_num_score, 2)), 
-    color = "#b8860b", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = only_num_score, 
+        label = paste("Only num:", round(only_num_score, 2))), 
+    color = "#b8860b", 
+    size = 3.2, 
+    vjust = 1.7,
+    fontface = "bold"
   ) +
-  
   geom_point(
     data = plot_data_sonnet5 |> filter(move_direction == "No meaningful change"),
     aes(x = cat_num_score), color = "#264653", size = 3.5
   ) +
   geom_text(
     data = plot_data_sonnet5 |> filter(move_direction == "No meaningful change"),
-    aes(x = cat_num_score, label = round(cat_num_score, 2)), 
-    color = "#264653", size = 3, vjust = -1.3, fontface = "bold"
+    aes(x = cat_num_score,
+        label = paste("Cat+Num:", round(cat_num_score, 2))), 
+    color = "#264653",
+    size = 3.2, 
+    vjust = -1.3, 
+    fontface = "bold"
   ) +
-  
   geom_point(
     data = tibble(
       x = c(0, 0), 
@@ -605,7 +641,6 @@ plot_sonnet5_score_comparison <- plot_data_sonnet5 |>
     aes(x = x, y = y, color = legend_color),
     shape = 15, size = 4, na.rm = TRUE
   ) +
-  
   scale_color_identity(
     name = NULL,
     breaks = c("#e76f51", "#2a9d8f"),
@@ -618,7 +653,7 @@ plot_sonnet5_score_comparison <- plot_data_sonnet5 |>
     title = "Joint vs. Independent Numeric Scoring: Claude Sonnet 5",
     subtitle = "No sign flips; arrow shows whether the score increased or decreased when scored independently vs. with a category attached",
     caption = "Data: Sonnet 18, William Shakespeare (1609)",
-    x = "Numeric Score",
+    x = NULL,
     y = NULL
   ) +
   theme_minimal(base_size = 14) +
@@ -639,19 +674,18 @@ plot_sonnet5_score_comparison
 ggsave(
   filename = "plots/03-plot_sonnet5_score_comparison.png",
   plot = plot_sonnet5_score_comparison,
-  width = 15,
-  height = 10,
+  width = 20,
+  height = 12,
   dpi = 300
 )
-
 
 
 ## Alluvial
 plot_sonnet5_cat_shift_alluvial <- sonnet_18_sonnet5_comparison |> 
   arrange(line) |> 
   mutate(
-    only_cat_sentiment = factor(only_cat_sentiment, levels = sentiment_levels),
-    cat_num_sentiment  = factor(cat_num_sentiment, levels = sentiment_levels),
+    only_cat_sentiment = factor(only_cat_sentiment, levels = default_sentiment_labels),
+    cat_num_sentiment  = factor(cat_num_sentiment, levels = default_sentiment_labels),
     sentiment_changed = if_else(
       as.character(only_cat_sentiment) == as.character(cat_num_sentiment),
       "Sentiment not changed",
@@ -662,13 +696,11 @@ plot_sonnet5_cat_shift_alluvial <- sonnet_18_sonnet5_comparison |>
   geom_alluvium(aes(fill = sentiment_changed), width = 0.25, alpha = 0.85, color = "white", linewidth = 0.2,
                 discern = FALSE) +
   geom_stratum(width = 0.25, fill = "white", color = "#264653", linewidth = 0.6, discern = FALSE) +
-  
   # Plain geom_text at the true stratum centroid — no repel, no drift risk
   geom_text(
     stat = "stratum", aes(label = after_stat(stratum)),
     size = 3.5, fontface = "bold", color = "#264653"
   ) +
-  
   geom_text_repel(
     stat = "alluvium", aes(label = line),
     size = 2.2, color = "black",
@@ -676,7 +708,6 @@ plot_sonnet5_cat_shift_alluvial <- sonnet_18_sonnet5_comparison |>
     min.segment.length = 0, box.padding = 0.15, max.overlaps = Inf,
     max.iter = 20000, force = 1.5
   ) +
-  
   scale_x_discrete(limits = c("Categorical Only", "Categorical + Numeric"), expand = c(0.2, 0.2)) +
   scale_fill_manual(values = c(
     "Sentiment not changed" = "#2a9d8f",
@@ -712,6 +743,5 @@ ggsave(
   height = 12,
   dpi = 300
 )
-
 
 
