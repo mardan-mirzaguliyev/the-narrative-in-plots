@@ -83,11 +83,20 @@ library(tidymodels)
 library(textrecipes)
 library(glmnet)
 library(gt)
+library(here)
+library(dotenv)
+library(googlesheets4)  # <-- Added missing library for read_sheet()
+
+
+load_dot_env(file = here(".env"))
 
 
 # Clean data with global replacement for quotes
-poem_raw <- read_excel("data/ozymandias-raw.xlsx") |>  
-  mutate(text = str_replace_all(text, '["“”]', ""))
+poem_id <- Sys.getenv("OZYMANDIAS_ID")
+
+gs4_auth()
+
+poem_raw <- read_sheet(poem_id, sheet = "Ozymandias") 
 poem_raw
 
 
