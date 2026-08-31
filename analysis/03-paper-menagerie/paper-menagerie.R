@@ -892,7 +892,7 @@ plot_syuzhet_sentence <- story_scored_syuzhet_sentence |>
       ) +
       labs(
         title = "Sentence-Level Emotional Arc",
-        subtitle = "Syuzhet scores normalized to -1/+1 · Labelled sentences are emotional extremes",
+        subtitle = "Syuzhet scores normalized to -1/+1: Labelled sentences are emotional extremes",
         caption = "Ken Liu, Paper Menagerie (2011)",
         x = "Sentence",
         y = "Normalized Sentiment Score",
