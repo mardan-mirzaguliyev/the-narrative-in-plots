@@ -77,6 +77,7 @@ saveRDS(full_go_emotions, "data/hf-datasets/full_go_emotions.rds")
 
 # Session B — tidymodels/textrecipes work, reticulate never loaded here
 library(readxl)
+library(googlesheets4)
 library(dplyr)
 library(stringr)
 library(tidymodels)
@@ -85,7 +86,7 @@ library(glmnet)
 library(gt)
 library(here)
 library(dotenv)
-library(googlesheets4)  # <-- Added missing library for read_sheet()
+
 
 
 load_dot_env(file = here(".env"))
