@@ -9,4 +9,4 @@
 HF_TOKEN
 *.env
 .env
-analysis/11-adiemus/data/adiemus.mp3
+analysis/11-adiemus/data/input/adiemus.mp3
