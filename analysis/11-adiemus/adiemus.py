@@ -23,7 +23,7 @@ load_dotenv()
 client = genai.Client()
 
 # 2. Define paths using pathlib
-output_path = Path("data/output/adiemus_analysis.txt")
+output_path = Path("data/output/adiemus_analysis_gemini.txt")
 audio_path = Path("data/input/adiemus.mp3")
 
 # 3. Conditional run: Check if the clean analysis file already exists locally
